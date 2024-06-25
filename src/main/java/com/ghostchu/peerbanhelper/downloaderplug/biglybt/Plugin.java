@@ -1,6 +1,7 @@
 package com.ghostchu.peerbanhelper.downloaderplug.biglybt;
 
 import com.biglybt.core.networkmanager.Transport;
+import com.biglybt.core.peer.impl.PEPeerTransport;
 import com.biglybt.pif.PluginException;
 import com.biglybt.pif.PluginInterface;
 import com.biglybt.pif.UnloadablePlugin;
@@ -15,6 +16,7 @@ import com.biglybt.pif.torrent.Torrent;
 import com.biglybt.pif.ui.config.IntParameter;
 import com.biglybt.pif.ui.config.StringParameter;
 import com.biglybt.pif.ui.model.BasicPluginConfigModel;
+import com.biglybt.pifimpl.local.peers.PeerImpl;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.BanBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.BanListReplacementBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.UnBanBean;
@@ -338,6 +340,10 @@ public class Plugin implements UnloadablePlugin {
 
     private PeerRecord getPeerRecord(Peer peer) {
         if (peer == null) return null;
+        String client = peer.getClient();
+        if(peer instanceof PeerImpl){
+            client = ((PeerImpl) peer).getDelegate().getClientNameFromExtensionHandshake();
+        }
         return new PeerRecord(
                 peer.isMyPeer(),
                 peer.getState(),
@@ -360,7 +366,7 @@ public class Plugin implements UnloadablePlugin {
                 getPeerStatsRecord(peer.getStats()),
                 peer.isIncoming(),
                 peer.getPercentDoneInThousandNotation(),
-                peer.getClient(),
+                client,
                 peer.isOptimisticUnchoke(),
                 peer.supportsMessaging(),
                 peer.isPriorityConnection()
