@@ -20,13 +20,12 @@ import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientboun
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.BanListReplacementBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.UnBanBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.serverbound.BatchOperationCallbackBean;
+import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.serverbound.MetadataCallbackBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.wrapper.*;
 import com.google.gson.Gson;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.http.HttpStatus;
-
-import java.io.File;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -38,8 +37,6 @@ public class Plugin implements UnloadablePlugin {
     private StringParameter accessKeyParam;
     private BasicPluginConfigModel configModel;
     private JavalinWebContainer webContainer;
-    private Config config;
-    private File configFile;
     private int port;
     private String token;
 
@@ -96,13 +93,23 @@ public class Plugin implements UnloadablePlugin {
     }
 
     private void initEndpoints(Javalin javalin) {
-        javalin.get("/downloads", this::handleDownloads)
+        javalin .get("/metadata", this::handleMetadata)
+                .get("/downloads", this::handleDownloads)
                 .get("/download/{infoHash}", this::handleDownload)
                 .get("/download/{infoHash}/peers", this::handlePeers)
                 .get("/bans", this::handleBans)
                 .post("/bans", this::handleBanListApplied)
                 .put("/bans", this::handleBanListReplacement)
                 .delete("/bans", this::handleBatchUnban);
+    }
+
+    private void handleMetadata(Context context) {
+        MetadataCallbackBean callbackBean = new MetadataCallbackBean(
+                pluginInterface.getPluginVersion(),
+                pluginInterface.getApplicationVersion(),
+                pluginInterface.getApplicationName(),
+                pluginInterface.getAzureusName());
+        context.json(callbackBean);
     }
 
     private void handleBanListApplied(Context context) {
@@ -126,18 +133,22 @@ public class Plugin implements UnloadablePlugin {
 
     private void handleDownloads(Context ctx) {
         List<DownloadRecord> records = new ArrayList<>();
+        List<Integer> filter = ctx.queryParams("filter").stream().map(Integer::parseInt).collect(Collectors.toList());
         for (Download download : pluginInterface.getDownloadManager().getDownloads()) {
-            records.add(getDownloadRecord(download));
+            boolean shouldAddToResultSet = filter.isEmpty() || filter.contains(download.getState());
+            if(shouldAddToResultSet){
+                records.add(getDownloadRecord(download));
+            }
         }
         ctx.status(HttpStatus.OK);
         ctx.json(records);
     }
 
     public void handleBans(Context ctx) {
-        BanListBean banListBean = ctx.bodyAsClass(BanListBean.class);
+        boolean includeNonPBH = Boolean.parseBoolean(ctx.queryParam("includeNonPBH"));
         List<String> banned = new ArrayList<>();
         for (IPBanned bannedIP : pluginInterface.getIPFilter().getBannedIPs()) {
-            if (!banListBean.isIncludeNonPBH()) {
+            if (!includeNonPBH) {
                 if (!PBH_IDENTIFIER.equals(bannedIP.getBannedTorrentName())) {
                     continue;
                 }
