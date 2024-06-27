@@ -5,6 +5,7 @@ import com.biglybt.core.peer.impl.PEPeerTransport;
 import com.biglybt.pif.PluginException;
 import com.biglybt.pif.PluginInterface;
 import com.biglybt.pif.UnloadablePlugin;
+import com.biglybt.pif.dht.mainline.MainlineDHTManager;
 import com.biglybt.pif.download.Download;
 import com.biglybt.pif.download.DownloadException;
 import com.biglybt.pif.download.DownloadStats;
