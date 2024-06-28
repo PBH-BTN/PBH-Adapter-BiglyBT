@@ -59,7 +59,7 @@ PeerBanHelper 的 BiglyBT 适配器插件。
 
 ![image](https://github.com/PBH-BTN/PBH-Adapter-BiglyBT/assets/30802565/0ea581a5-23ff-491c-818b-a43b1bb36d66)
 
-填完应当如下图所示（请根据自己实际情况填写，不要照抄，连不上的）
+填完应当如下图所示（请根据自己实际情况填写，不要照抄，连不上的），对于 BiglyBT，建议启用增量封禁
 
 ![image](https://github.com/PBH-BTN/PBH-Adapter-BiglyBT/assets/30802565/5dde841f-b0dd-4745-a920-f9c8b3f676c9)
 
