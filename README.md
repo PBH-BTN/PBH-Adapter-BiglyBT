@@ -2,6 +2,9 @@
 
 PeerBanHelper 的 BiglyBT 适配器插件。
 
+> [!NOTE]
+> PBH-Adapter-BiglyBT 插件需要 Java 11 或者更高版本的 Java。请确认您的 BiglyBT 正在使用 11 或者更高版本的 Java，否则插件将无法运行
+
 ## 安装
 
 ### 第一步
