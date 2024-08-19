@@ -14,7 +14,7 @@ com.biglybt.pif.peers.Peer.java
 public class PeerRecord {
     private boolean myPeer;
     private int state;
-    private String peerIdBase64;
+    private String peerId;
     private String ip;
     private int tcpListenPort;
     private int udpListenPort;

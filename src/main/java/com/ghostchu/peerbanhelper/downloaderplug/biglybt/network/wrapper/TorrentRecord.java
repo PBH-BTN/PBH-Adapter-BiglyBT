@@ -13,7 +13,7 @@ com.biglybt.pif.torrent.Torrent.java
 @NoArgsConstructor
 public class TorrentRecord {
     private String name;
-    private String hashBase64;
+    private String infoHash;
     private long size;
     private long creationDate;
     private String createdBy;
