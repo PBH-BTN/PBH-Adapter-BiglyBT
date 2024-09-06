@@ -13,7 +13,7 @@ PeerBanHelper 的 BiglyBT 适配器插件。
 
 ### 第一步
 
-从 [Github Releases](https://github.com/PBH-BTN/PBH-Adapter-BiglyBT/releases) 下载您的 PeerBanHelper 对应版本的 PBH-Adapter-BiglyBT 插件压缩包（如果没有说明，请下载最新版本）。
+从 [Github Releases](https://github.com/PBH-BTN/PBH-Adapter-BiglyBT/releases) 下载您的 PeerBanHelper 对应版本的 PBH-Adapter-BiglyBT 插件 jar 包（如果没有说明，请下载最新版本）。
 
 ### 第二步
 
@@ -21,9 +21,9 @@ PeerBanHelper 的 BiglyBT 适配器插件。
 
 ![image](https://github.com/PBH-BTN/PBH-Adapter-BiglyBT/assets/30802565/68d751f9-2cfa-491c-9462-cf05c0a7961c)
 
-选中刚刚下载的压缩包下一步安装。
+选中刚刚下载的 `.jar` 文件，然后下一步安装。
 
-![image](https://github.com/PBH-BTN/PBH-Adapter-BiglyBT/assets/30802565/7acd7909-db9b-4a04-a426-daf602acca82)
+![image](https://github.com/user-attachments/assets/47964e0e-b053-4fc1-8c11-5509cab788f0)
 
 如果 BiglyBT 询问您为谁安装，请根据自己的需要选择。如无特殊要求，请选择默认的选项。
 
