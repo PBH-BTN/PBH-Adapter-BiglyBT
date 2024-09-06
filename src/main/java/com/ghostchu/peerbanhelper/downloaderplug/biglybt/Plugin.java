@@ -2,9 +2,8 @@ package com.ghostchu.peerbanhelper.downloaderplug.biglybt;
 
 import com.biglybt.core.config.COConfigurationManager;
 import com.biglybt.core.networkmanager.Transport;
-import com.biglybt.pif.PluginException;
-import com.biglybt.pif.PluginInterface;
-import com.biglybt.pif.UnloadablePlugin;
+import com.biglybt.pif.*;
+import com.biglybt.pif.config.PluginConfigSource;
 import com.biglybt.pif.download.Download;
 import com.biglybt.pif.download.DownloadException;
 import com.biglybt.pif.download.DownloadStats;
@@ -15,6 +14,8 @@ import com.biglybt.pif.peers.*;
 import com.biglybt.pif.tag.Tag;
 import com.biglybt.pif.torrent.Torrent;
 import com.biglybt.pif.ui.config.IntParameter;
+import com.biglybt.pif.ui.config.Parameter;
+import com.biglybt.pif.ui.config.ParameterListener;
 import com.biglybt.pif.ui.config.StringParameter;
 import com.biglybt.pif.ui.model.BasicPluginConfigModel;
 import com.biglybt.pifimpl.local.peers.PeerImpl;
@@ -28,13 +29,14 @@ import com.google.gson.Gson;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.http.HttpStatus;
+import lombok.extern.slf4j.Slf4j;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
-
+@Slf4j
 public class Plugin implements UnloadablePlugin {
     public static final Gson GSON = new Gson();
     private static final String PBH_IDENTIFIER = "<PeerBanHelper>";
@@ -46,6 +48,8 @@ public class Plugin implements UnloadablePlugin {
     private JavalinWebContainer webContainer;
     private int port;
     private String token;
+    private PluginConfig cfg;
+    private PluginConfigSource configSource;
 
     private static TorrentRecord getTorrentRecord(Torrent torrent) {
         if (torrent == null) return null;
@@ -137,20 +141,31 @@ public class Plugin implements UnloadablePlugin {
     @Override
     public void initialize(PluginInterface pluginInterface) {
         this.pluginInterface = pluginInterface;
+        this.cfg = pluginInterface.getPluginconfig();
+        this.port = cfg.getPluginIntParameter("web.port",7759);
+        this.token = cfg.getPluginStringParameter("web.token", UUID.randomUUID().toString());
         configModel = pluginInterface.getUIManager().createBasicPluginConfigModel("peerbanhelper.configui");
-        listenPortParam = configModel.addIntParameter2("api-port", "peerbanhelper.port", 7756);
-        accessKeyParam = configModel.addStringParameter2("api-token", "peerbanhelper.token", UUID.randomUUID().toString());
-        this.port = listenPortParam.getValue();
-        this.token = accessKeyParam.getValue();
-        listenPortParam.addListener(parameter -> {
+        listenPortParam = configModel.addIntParameter2("api-port", "peerbanhelper.port", port);
+        listenPortParam.addListener(lis-> {
             this.port = listenPortParam.getValue();
-            reloadPlugin();
+            saveAndReload();
         });
-
-        accessKeyParam.addListener(parameter -> {
+        accessKeyParam = configModel.addStringParameter2("api-token", "peerbanhelper.token", token);
+        accessKeyParam.addListener(lis-> {
             this.token = accessKeyParam.getValue();
-            reloadPlugin();
+            saveAndReload();
         });
+        saveAndReload();
+    }
+
+    private void saveAndReload() {
+        cfg.setPluginParameter("web.token", token);
+        cfg.setPluginParameter("web.port", port);
+        try {
+            this.cfg.save();
+        }catch (Exception e){
+            throw new RuntimeException(e);
+        }
         reloadPlugin();
     }
 
@@ -159,7 +174,12 @@ public class Plugin implements UnloadablePlugin {
             webContainer.stop();
         }
         webContainer = new JavalinWebContainer();
-        webContainer.start("0.0.0.0", port, token);
+        webContainer.start("0.0.0.0",
+               port,
+               token);
+        log.info("PBH-Adapter WebServer started with: port={}, token={}",
+                port,
+              token);
         initEndpoints(webContainer.javalin());
     }
 
