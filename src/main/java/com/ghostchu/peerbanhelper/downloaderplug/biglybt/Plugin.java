@@ -423,8 +423,8 @@ public class Plugin implements UnloadablePlugin {
     private PeerManagerRecord getPeerManagerRecord(PeerManager peerManager) {
         if (peerManager == null) return null;
         return new PeerManagerRecord(
-                Arrays.stream(peerManager.getPeers()).map(this::getPeerRecord).collect(Collectors.toList()),
-                Arrays.stream(peerManager.getPendingPeers()).map(this::getDescriptorRecord).collect(Collectors.toList()),
+                Arrays.stream(peerManager.getPeers()).map(this::getPeerRecord).filter(Objects::nonNull).collect(Collectors.toList()),
+                Arrays.stream(peerManager.getPendingPeers()).map(this::getDescriptorRecord).filter(Objects::nonNull).collect(Collectors.toList()),
                 getPeerManagerStatsRecord(peerManager.getStats()),
                 peerManager.isSeeding(),
                 peerManager.isSuperSeeding()
@@ -464,6 +464,7 @@ public class Plugin implements UnloadablePlugin {
         if (peer instanceof PeerImpl) {
             client = ((PeerImpl) peer).getDelegate().getClientNameFromExtensionHandshake();
         }
+        if(peer.getIp().endsWith(".i2p") || peer.getIp().endsWith(".onion")|| peer.getIp().endsWith(".tor")) return null;
         return new PeerRecord(
                 peer.isMyPeer(),
                 peer.getState(),
