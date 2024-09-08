@@ -2,7 +2,10 @@ package com.ghostchu.peerbanhelper.downloaderplug.biglybt;
 
 import com.biglybt.core.config.COConfigurationManager;
 import com.biglybt.core.networkmanager.Transport;
-import com.biglybt.pif.*;
+import com.biglybt.pif.PluginConfig;
+import com.biglybt.pif.PluginException;
+import com.biglybt.pif.PluginInterface;
+import com.biglybt.pif.UnloadablePlugin;
 import com.biglybt.pif.config.PluginConfigSource;
 import com.biglybt.pif.download.Download;
 import com.biglybt.pif.download.DownloadException;
@@ -14,8 +17,6 @@ import com.biglybt.pif.peers.*;
 import com.biglybt.pif.tag.Tag;
 import com.biglybt.pif.torrent.Torrent;
 import com.biglybt.pif.ui.config.IntParameter;
-import com.biglybt.pif.ui.config.Parameter;
-import com.biglybt.pif.ui.config.ParameterListener;
 import com.biglybt.pif.ui.config.StringParameter;
 import com.biglybt.pif.ui.model.BasicPluginConfigModel;
 import com.biglybt.pifimpl.local.peers.PeerImpl;
@@ -36,6 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
+
 @Slf4j
 public class Plugin implements UnloadablePlugin {
     public static final Gson GSON = new Gson();
@@ -81,6 +83,7 @@ public class Plugin implements UnloadablePlugin {
 
     /**
      * hex字符串转byte数组
+     *
      * @param inHex 待转换的Hex字符串
      * @return 转换后的byte数组结果
      */
@@ -106,6 +109,7 @@ public class Plugin implements UnloadablePlugin {
 
     /**
      * Hex字符串转byte
+     *
      * @param inHex 待转换的Hex字符串
      * @return 转换后的byte
      */
@@ -116,13 +120,15 @@ public class Plugin implements UnloadablePlugin {
     public void runIPFilterOperation(Runnable runnable) throws IPFilterException {
         BAN_LIST_OPERATION_LOCK.lock();
         try {
-            var originalPersistentSetting = COConfigurationManager.getBooleanParameter("Ip Filter Banning Persistent" );
+            var originalPersistentSetting = COConfigurationManager.getBooleanParameter("Ip Filter Banning Persistent");
+            //originalPersistentSetting = false;
             try {
                 COConfigurationManager.setParameter("Ip Filter Banning Persistent", false);
+                COConfigurationManager.setParameter("Ip Filter Ban Block Limit", 256);
                 runnable.run();
-            }finally {
+            } finally {
                 COConfigurationManager.setParameter("Ip Filter Banning Persistent", originalPersistentSetting);
-                if(originalPersistentSetting){
+                if (originalPersistentSetting) {
                     this.pluginInterface.getIPFilter().save();
                 }
             }
@@ -142,16 +148,16 @@ public class Plugin implements UnloadablePlugin {
     public void initialize(PluginInterface pluginInterface) {
         this.pluginInterface = pluginInterface;
         this.cfg = pluginInterface.getPluginconfig();
-        this.port = cfg.getPluginIntParameter("web.port",7759);
+        this.port = cfg.getPluginIntParameter("web.port", 7759);
         this.token = cfg.getPluginStringParameter("web.token", UUID.randomUUID().toString());
         configModel = pluginInterface.getUIManager().createBasicPluginConfigModel("peerbanhelper.configui");
         listenPortParam = configModel.addIntParameter2("api-port", "peerbanhelper.port", port);
-        listenPortParam.addListener(lis-> {
+        listenPortParam.addListener(lis -> {
             this.port = listenPortParam.getValue();
             saveAndReload();
         });
         accessKeyParam = configModel.addStringParameter2("api-token", "peerbanhelper.token", token);
-        accessKeyParam.addListener(lis-> {
+        accessKeyParam.addListener(lis -> {
             this.token = accessKeyParam.getValue();
             saveAndReload();
         });
@@ -163,7 +169,7 @@ public class Plugin implements UnloadablePlugin {
         cfg.setPluginParameter("web.port", port);
         try {
             this.cfg.save();
-        }catch (Exception e){
+        } catch (Exception e) {
             throw new RuntimeException(e);
         }
         reloadPlugin();
@@ -175,11 +181,11 @@ public class Plugin implements UnloadablePlugin {
         }
         webContainer = new JavalinWebContainer();
         webContainer.start("0.0.0.0",
-               port,
-               token);
+                port,
+                token);
         log.info("PBH-Adapter WebServer started with: port={}, token={}",
                 port,
-              token);
+                token);
         initEndpoints(webContainer.javalin());
     }
 
@@ -232,7 +238,7 @@ public class Plugin implements UnloadablePlugin {
         IPFilter ipFilter = pluginInterface.getIPFilter();
         AtomicInteger success = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
-        runIPFilterOperation(()->{
+        runIPFilterOperation(() -> {
             for (String s : banBean.getIps()) {
                 try {
                     ipFilter.ban(s, PBH_IDENTIFIER);
@@ -280,7 +286,7 @@ public class Plugin implements UnloadablePlugin {
         UnBanBean banBean = ctx.bodyAsClass(UnBanBean.class);
         AtomicInteger unbanned = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
-        runIPFilterOperation(()->{
+        runIPFilterOperation(() -> {
             for (String ip : banBean.getIps()) {
                 try {
                     pluginInterface.getIPFilter().unban(ip);
@@ -320,6 +326,10 @@ public class Plugin implements UnloadablePlugin {
                 ctx.status(HttpStatus.NOT_FOUND);
                 return;
             }
+            if(download.getPeerManager() == null){
+                ctx.status(HttpStatus.NOT_FOUND);
+                return;
+            }
             ctx.json(getPeerManagerRecord(download.getPeerManager()));
         } catch (DownloadException e) {
             ctx.status(HttpStatus.NOT_FOUND);
@@ -330,7 +340,7 @@ public class Plugin implements UnloadablePlugin {
         BanListReplacementBean replacementBean = ctx.bodyAsClass(BanListReplacementBean.class);
         AtomicInteger success = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
-        runIPFilterOperation(()->{
+        runIPFilterOperation(() -> {
             IPFilter ipFilter = pluginInterface.getIPFilter();
             for (IPBanned blockedIP : ipFilter.getBannedIPs()) {
                 if (PBH_IDENTIFIER.equals(blockedIP.getBannedTorrentName()) || replacementBean.isIncludeNonPBHEntries()) {
@@ -464,7 +474,8 @@ public class Plugin implements UnloadablePlugin {
         if (peer instanceof PeerImpl) {
             client = ((PeerImpl) peer).getDelegate().getClientNameFromExtensionHandshake();
         }
-        if(peer.getIp().endsWith(".i2p") || peer.getIp().endsWith(".onion")|| peer.getIp().endsWith(".tor")) return null;
+        if (peer.getIp().endsWith(".i2p") || peer.getIp().endsWith(".onion") || peer.getIp().endsWith(".tor"))
+            return null;
         return new PeerRecord(
                 peer.isMyPeer(),
                 peer.getState(),
