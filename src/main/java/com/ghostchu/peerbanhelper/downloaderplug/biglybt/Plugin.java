@@ -186,7 +186,7 @@ public class Plugin implements UnloadablePlugin {
     private void saveAndReload() {
         cfg.setPluginParameter("web.token", token);
         cfg.setPluginParameter("web.port", port);
-        cfg.setPluginParameter("bt.useClientIdModifier", port);
+        cfg.setPluginParameter("bt.useClientIdModifier", useClientIdModifier);
         try {
             this.cfg.save();
         } catch (Exception e) {
