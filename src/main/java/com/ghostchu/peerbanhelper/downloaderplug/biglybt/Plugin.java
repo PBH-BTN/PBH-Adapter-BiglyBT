@@ -6,7 +6,7 @@ import com.biglybt.pif.PluginConfig;
 import com.biglybt.pif.PluginException;
 import com.biglybt.pif.PluginInterface;
 import com.biglybt.pif.UnloadablePlugin;
-import com.biglybt.pif.config.PluginConfigSource;
+import com.biglybt.pif.clientid.ClientIDGenerator;
 import com.biglybt.pif.download.Download;
 import com.biglybt.pif.download.DownloadException;
 import com.biglybt.pif.download.DownloadStats;
@@ -19,7 +19,9 @@ import com.biglybt.pif.torrent.Torrent;
 import com.biglybt.pif.ui.config.IntParameter;
 import com.biglybt.pif.ui.config.StringParameter;
 import com.biglybt.pif.ui.model.BasicPluginConfigModel;
+import com.biglybt.pifimpl.local.clientid.ClientIDManagerImpl;
 import com.biglybt.pifimpl.local.peers.PeerImpl;
+import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.ConnectorData;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.BanBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.BanListReplacementBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.UnBanBean;
@@ -30,6 +32,7 @@ import com.google.gson.Gson;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.http.HttpStatus;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.*;
@@ -39,6 +42,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 @Slf4j
+@Getter
 public class Plugin implements UnloadablePlugin {
     public static final Gson GSON = new Gson();
     private static final String PBH_IDENTIFIER = "<PeerBanHelper>";
@@ -51,7 +55,8 @@ public class Plugin implements UnloadablePlugin {
     private int port;
     private String token;
     private PluginConfig cfg;
-    private PluginConfigSource configSource;
+    private ConnectorData connectorData;
+    private ClientIDGenerator clientIDGeneratorOriginal;
 
     private static TorrentRecord getTorrentRecord(Torrent torrent) {
         if (torrent == null) return null;
@@ -142,6 +147,9 @@ public class Plugin implements UnloadablePlugin {
         if (webContainer != null) {
             webContainer.stop();
         }
+        if(clientIDGeneratorOriginal != null){
+            ClientIDManagerImpl.getSingleton().setGenerator(clientIDGeneratorOriginal, true);
+        }
     }
 
     @Override
@@ -162,6 +170,8 @@ public class Plugin implements UnloadablePlugin {
             saveAndReload();
         });
         saveAndReload();
+        clientIDGeneratorOriginal = ClientIDManagerImpl.getSingleton().getGenerator();
+        ClientIDManagerImpl.getSingleton().setGenerator(new PBHClientIDGenerator(this, clientIDGeneratorOriginal), true);
     }
 
     private void saveAndReload() {
@@ -191,6 +201,7 @@ public class Plugin implements UnloadablePlugin {
 
     private void initEndpoints(Javalin javalin) {
         javalin.get("/metadata", this::handleMetadata)
+                .post("/setconnector", this::handleSetConnector)
                 .get("/statistics", this::handleStatistics)
                 .get("/downloads", this::handleDownloads)
                 .get("/download/{infoHash}", this::handleDownload)
@@ -199,6 +210,10 @@ public class Plugin implements UnloadablePlugin {
                 .post("/bans", this::handleBanListApplied)
                 .put("/bans", this::handleBanListReplacement)
                 .delete("/bans", this::handleBatchUnban);
+    }
+
+    private void handleSetConnector(Context context) {
+        this.connectorData = context.bodyAsClass(ConnectorData.class);
     }
 
     private void handleStatistics(Context context) {
@@ -326,7 +341,7 @@ public class Plugin implements UnloadablePlugin {
                 ctx.status(HttpStatus.NOT_FOUND);
                 return;
             }
-            if(download.getPeerManager() == null){
+            if (download.getPeerManager() == null) {
                 ctx.status(HttpStatus.NOT_FOUND);
                 return;
             }
