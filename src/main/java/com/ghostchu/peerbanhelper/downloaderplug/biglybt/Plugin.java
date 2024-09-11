@@ -16,6 +16,7 @@ import com.biglybt.pif.ipfilter.IPFilterException;
 import com.biglybt.pif.peers.*;
 import com.biglybt.pif.tag.Tag;
 import com.biglybt.pif.torrent.Torrent;
+import com.biglybt.pif.ui.config.BooleanParameter;
 import com.biglybt.pif.ui.config.IntParameter;
 import com.biglybt.pif.ui.config.StringParameter;
 import com.biglybt.pif.ui.model.BasicPluginConfigModel;
@@ -57,6 +58,8 @@ public class Plugin implements UnloadablePlugin {
     private PluginConfig cfg;
     private ConnectorData connectorData;
     private ClientIDGenerator clientIDGeneratorOriginal;
+    private boolean useClientIdModifier;
+    private BooleanParameter clientIdModifier;
 
     private static TorrentRecord getTorrentRecord(Torrent torrent) {
         if (torrent == null) return null;
@@ -158,6 +161,7 @@ public class Plugin implements UnloadablePlugin {
         this.cfg = pluginInterface.getPluginconfig();
         this.port = cfg.getPluginIntParameter("web.port", 7759);
         this.token = cfg.getPluginStringParameter("web.token", UUID.randomUUID().toString());
+        this.useClientIdModifier = cfg.getPluginBooleanParameter("bt.useClientIdModifier", true);
         configModel = pluginInterface.getUIManager().createBasicPluginConfigModel("peerbanhelper.configui");
         listenPortParam = configModel.addIntParameter2("api-port", "peerbanhelper.port", port);
         listenPortParam.addListener(lis -> {
@@ -169,6 +173,11 @@ public class Plugin implements UnloadablePlugin {
             this.token = accessKeyParam.getValue();
             saveAndReload();
         });
+        clientIdModifier = configModel.addBooleanParameter2("use-client-id-modifier", "peerbanhelper.clientIdModifier", useClientIdModifier);
+        clientIdModifier.addListener(lis -> {
+            this.useClientIdModifier = clientIdModifier.getValue();
+            saveAndReload();
+        });
         saveAndReload();
         clientIDGeneratorOriginal = ClientIDManagerImpl.getSingleton().getGenerator();
         ClientIDManagerImpl.getSingleton().setGenerator(new PBHClientIDGenerator(this, clientIDGeneratorOriginal), true);
@@ -177,6 +186,7 @@ public class Plugin implements UnloadablePlugin {
     private void saveAndReload() {
         cfg.setPluginParameter("web.token", token);
         cfg.setPluginParameter("web.port", port);
+        cfg.setPluginParameter("bt.useClientIdModifier", port);
         try {
             this.cfg.save();
         } catch (Exception e) {
@@ -267,6 +277,14 @@ public class Plugin implements UnloadablePlugin {
         cleanupPeers(banBean.getIps());
         context.status(HttpStatus.OK);
         context.json(new BatchOperationCallbackBean(success.get(), failed.get()));
+    }
+
+    public ConnectorData getConnectorData() {
+        if(useClientIdModifier) {
+            return connectorData;
+        }else{
+            return null;
+        }
     }
 
     private void handleDownloads(Context ctx) {
