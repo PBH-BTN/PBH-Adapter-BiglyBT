@@ -13,6 +13,7 @@ import com.biglybt.pif.download.DownloadStats;
 import com.biglybt.pif.ipfilter.IPBanned;
 import com.biglybt.pif.ipfilter.IPFilter;
 import com.biglybt.pif.ipfilter.IPFilterException;
+import com.biglybt.pif.messaging.Message;
 import com.biglybt.pif.peers.*;
 import com.biglybt.pif.tag.Tag;
 import com.biglybt.pif.torrent.Torrent;
@@ -534,7 +535,9 @@ public class Plugin implements UnloadablePlugin {
                 client,
                 peer.isOptimisticUnchoke(),
                 peer.supportsMessaging(),
-                peer.isPriorityConnection()
+                peer.isPriorityConnection(),
+                peer.getHandshakeReservedBytes(),
+                Arrays.stream(peer.getSupportedMessages()).map(Message::getID).collect(Collectors.toList())
         );
     }
 
