@@ -151,7 +151,7 @@ public class Plugin implements UnloadablePlugin {
         if (webContainer != null) {
             webContainer.stop();
         }
-        if(clientIDGeneratorOriginal != null){
+        if (clientIDGeneratorOriginal != null) {
             ClientIDManagerImpl.getSingleton().setGenerator(clientIDGeneratorOriginal, true);
         }
     }
@@ -281,9 +281,9 @@ public class Plugin implements UnloadablePlugin {
     }
 
     public ConnectorData getConnectorData() {
-        if(useClientIdModifier) {
+        if (useClientIdModifier) {
             return connectorData;
-        }else{
+        } else {
             return null;
         }
     }
@@ -510,6 +510,11 @@ public class Plugin implements UnloadablePlugin {
         }
         if (peer.getIp().endsWith(".i2p") || peer.getIp().endsWith(".onion") || peer.getIp().endsWith(".tor"))
             return null;
+        com.biglybt.pif.messaging.Message[] messages = new Message[0];
+        try {
+            messages = peer.getSupportedMessages();
+        } catch (NullPointerException ignored) {
+        }
         return new PeerRecord(
                 peer.isMyPeer(),
                 peer.getState(),
@@ -537,7 +542,7 @@ public class Plugin implements UnloadablePlugin {
                 peer.supportsMessaging(),
                 peer.isPriorityConnection(),
                 peer.getHandshakeReservedBytes(),
-                Arrays.stream(peer.getSupportedMessages()).map(Message::getID).collect(Collectors.toList())
+                Arrays.stream(messages).map(Message::getID).collect(Collectors.toList())
         );
     }
 
