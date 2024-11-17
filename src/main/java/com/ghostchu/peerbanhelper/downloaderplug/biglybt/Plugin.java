@@ -511,9 +511,8 @@ public class Plugin implements UnloadablePlugin {
         if (peer.getIp().endsWith(".i2p") || peer.getIp().endsWith(".onion") || peer.getIp().endsWith(".tor"))
             return null;
         com.biglybt.pif.messaging.Message[] messages = new Message[0];
-        try {
+        if (peer.supportsMessaging()) {
             messages = peer.getSupportedMessages();
-        } catch (NullPointerException ignored) {
         }
         return new PeerRecord(
                 peer.isMyPeer(),
