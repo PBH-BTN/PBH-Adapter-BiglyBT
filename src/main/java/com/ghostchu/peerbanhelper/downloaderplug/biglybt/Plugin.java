@@ -289,7 +289,7 @@ public class Plugin implements UnloadablePlugin {
     }
 
     private void handleDownloads(Context ctx) {
-        List<DownloadRecord> records = new LinkedList<>();
+        List<DownloadRecord> records = new ArrayList<>();
         List<Integer> filter = ctx.queryParams("filter").stream().map(Integer::parseInt).collect(Collectors.toList());
         for (Download download : pluginInterface.getDownloadManager().getDownloads()) {
             boolean shouldAddToResultSet = filter.isEmpty() || filter.contains(download.getState());
@@ -303,7 +303,7 @@ public class Plugin implements UnloadablePlugin {
 
     public void handleBans(Context ctx) {
         boolean includeNonPBH = Boolean.parseBoolean(ctx.queryParam("includeNonPBH"));
-        List<String> banned = new LinkedList<>();
+        List<String> banned = new ArrayList<>();
         for (IPBanned bannedIP : pluginInterface.getIPFilter().getBannedIPs()) {
             if (!includeNonPBH) {
                 if (!PBH_IDENTIFIER.equals(bannedIP.getBannedTorrentName())) {
