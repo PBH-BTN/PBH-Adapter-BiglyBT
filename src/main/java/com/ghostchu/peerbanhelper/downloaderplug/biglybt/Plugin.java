@@ -1,5 +1,7 @@
 package com.ghostchu.peerbanhelper.downloaderplug.biglybt;
 
+import com.biglybt.core.config.COConfigurationManager;
+import com.biglybt.core.config.ConfigKeys;
 import com.biglybt.core.networkmanager.NetworkConnectionFactory;
 import com.biglybt.core.networkmanager.Transport;
 import com.biglybt.pif.PluginConfig;
@@ -208,6 +210,7 @@ public class Plugin implements UnloadablePlugin {
         log.info("PBH-Adapter WebServer started with: port={}, token={}",
                 port,
                 token);
+        COConfigurationManager.setParameter(ConfigKeys.Transfer.BCFG_ALLOW_SAME_IP_PEERS, true);
         initEndpoints(webContainer.javalin());
     }
 
