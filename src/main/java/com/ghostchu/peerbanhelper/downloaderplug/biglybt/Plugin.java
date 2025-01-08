@@ -13,7 +13,6 @@ import com.biglybt.pif.download.DownloadException;
 import com.biglybt.pif.download.DownloadStats;
 import com.biglybt.pif.ipfilter.IPBanned;
 import com.biglybt.pif.ipfilter.IPFilter;
-import com.biglybt.pif.ipfilter.IPFilterException;
 import com.biglybt.pif.messaging.Message;
 import com.biglybt.pif.peers.*;
 import com.biglybt.pif.tag.Tag;
@@ -305,19 +304,17 @@ public class Plugin implements UnloadablePlugin {
     public void handleBans(Context ctx) {
         boolean includeNonPBH = Boolean.parseBoolean(ctx.queryParam("includeNonPBH"));
         List<String> banned = new ArrayList<>();
-        for (IPBanned bannedIP : pluginInterface.getIPFilter().getBannedIPs()) {
-            if (!includeNonPBH) {
-                if (!PBH_IDENTIFIER.equals(bannedIP.getBannedTorrentName())) {
-                    continue;
-                }
+        banList.nodeIterator(false).forEachRemaining(node -> banned.add(node.toString()));
+        if (includeNonPBH) {
+            for (IPBanned bannedIP : pluginInterface.getIPFilter().getBannedIPs()) {
+                banned.add(bannedIP.getBannedIP());
             }
-            banned.add(bannedIP.getBannedIP());
         }
         ctx.status(HttpStatus.OK);
         ctx.json(banned);
     }
 
-    private void handleBatchUnban(Context ctx) throws IPFilterException {
+    private void handleBatchUnban(Context ctx) {
         UnBanBean banBean = ctx.bodyAsClass(UnBanBean.class);
         AtomicInteger unbanned = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
