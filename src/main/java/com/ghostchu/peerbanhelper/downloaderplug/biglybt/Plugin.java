@@ -12,7 +12,6 @@ import com.biglybt.pif.download.Download;
 import com.biglybt.pif.download.DownloadException;
 import com.biglybt.pif.download.DownloadStats;
 import com.biglybt.pif.ipfilter.IPBanned;
-import com.biglybt.pif.ipfilter.IPFilter;
 import com.biglybt.pif.messaging.Message;
 import com.biglybt.pif.peers.*;
 import com.biglybt.pif.tag.Tag;
@@ -370,7 +369,6 @@ public class Plugin implements UnloadablePlugin {
         BanListReplacementBean replacementBean = ctx.bodyAsClass(BanListReplacementBean.class);
         AtomicInteger success = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
-        IPFilter ipFilter = pluginInterface.getIPFilter();
         banList.getIPv4Trie().clear();
         banList.getIPv6Trie().clear();
         for (String s : replacementBean.getReplaceWith()) {
