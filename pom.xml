@@ -6,7 +6,7 @@
 
     <groupId>com.ghostchu.peerbanhelper</groupId>
     <artifactId>BiglyBT-PBH-Plugin</artifactId>
-    <version>1.2.7-SNAPSHOT</version>
+    <version>1.2.7</version>
     <!--    <packaging>takari-jar</packaging>-->
     <packaging>jar</packaging>
 
