@@ -16,12 +16,14 @@ import com.biglybt.pif.messaging.Message;
 import com.biglybt.pif.peers.*;
 import com.biglybt.pif.tag.Tag;
 import com.biglybt.pif.torrent.Torrent;
+import com.biglybt.pif.torrent.TorrentAnnounceURLListSet;
 import com.biglybt.pif.ui.config.BooleanParameter;
 import com.biglybt.pif.ui.config.IntParameter;
 import com.biglybt.pif.ui.config.LabelParameter;
 import com.biglybt.pif.ui.config.StringParameter;
 import com.biglybt.pif.ui.model.BasicPluginConfigModel;
 import com.biglybt.pifimpl.local.clientid.ClientIDManagerImpl;
+import com.biglybt.pifimpl.local.download.DownloadImpl;
 import com.biglybt.pifimpl.local.peers.PeerImpl;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.ConnectorData;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.BanBean;
@@ -39,6 +41,8 @@ import io.javalin.http.HttpStatus;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -219,10 +223,39 @@ public class Plugin implements UnloadablePlugin {
                 .get("/downloads", this::handleDownloads)
                 .get("/download/{infoHash}", this::handleDownload)
                 .get("/download/{infoHash}/peers", this::handlePeers)
+                .patch("/download/{infoHash}/trackers", this::handleTrackersSet)
                 .get("/bans", this::handleBans)
                 .post("/bans", this::handleBanListApplied)
                 .put("/bans", this::handleBanListReplacement)
                 .delete("/bans", this::handleBatchUnban);
+    }
+
+    private void handleTrackersSet(Context ctx) {
+        String arg = ctx.pathParam("infoHash");
+        byte[] infoHash = hexToByteArray(arg);
+        String trackers = ctx.body();
+        try {
+            Download download = pluginInterface.getDownloadManager().getDownload(infoHash);
+            if (download == null) {
+                ctx.status(HttpStatus.NOT_FOUND);
+                return;
+            }
+            List<TorrentAnnounceURLListSet> sets = new ArrayList<>();
+            for (String tracker : trackers.split("\n\n")) {
+                String[] group = tracker.split("\n");
+                URL[] urls = new URL[group.length];
+                for (int i = 0; i < group.length; i++) {
+                    try {
+                        urls[i] = new URL(group[i]);
+                    } catch (MalformedURLException ignored) {
+                    }
+                }
+                sets.add(download.getTorrent().getAnnounceURLList().create(urls));
+            }
+            download.getTorrent().getAnnounceURLList().setSets(sets.toArray(new TorrentAnnounceURLListSet[0]));
+        } catch (DownloadException e) {
+            ctx.status(HttpStatus.NOT_FOUND);
+        }
     }
 
     private void handleSetConnector(Context context) {
@@ -431,6 +464,11 @@ public class Plugin implements UnloadablePlugin {
 
     private DownloadRecord getDownloadRecord(Download download) {
         if (download == null) return null;
+        DownloadImpl downloadImpl = (DownloadImpl) download;
+        List<List<String>> trackers = new ArrayList<>();
+        for (TorrentAnnounceURLListSet set : downloadImpl.getTorrent().getAnnounceURLList().getSets()) {
+            trackers.add(Arrays.stream(set.getURLs()).map(Object::toString).collect(Collectors.toList()));
+        }
         DownloadStatsRecord downloadStatsRecord = getDownloadStatsRecord(download.getStats());
         TorrentRecord torrentRecord = getTorrentRecord(download.getTorrent());
         return new DownloadRecord(
@@ -450,7 +488,8 @@ public class Plugin implements UnloadablePlugin {
                 download.isChecking(),
                 download.isMoving(),
                 download.getDownloadPeerId() == null ? null : bytesToHex(download.getDownloadPeerId()).toLowerCase(Locale.ROOT),
-                download.isRemoved());
+                download.isRemoved(),
+                trackers);
     }
 
     private PeerManagerRecord getPeerManagerRecord(PeerManager peerManager) {

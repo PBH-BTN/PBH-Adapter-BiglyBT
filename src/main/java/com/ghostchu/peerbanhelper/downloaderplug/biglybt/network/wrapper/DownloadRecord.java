@@ -29,4 +29,5 @@ public class DownloadRecord {
     private boolean moving;
     private String downloadPeerIdISO88591;
     private boolean removed;
+    private List<List<String>> trackers;
 }
