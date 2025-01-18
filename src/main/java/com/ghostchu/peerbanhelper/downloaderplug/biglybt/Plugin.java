@@ -177,7 +177,7 @@ public class Plugin implements UnloadablePlugin {
         NetworkConnectionFactory.addListener(networkConnection -> {
             var sockAddress = networkConnection.getEndpoint().getNotionalAddress();
             var ip = sockAddress.getAddress().getHostAddress();
-            if (banList.elementContains(new IPAddressString(ip).getAddress())) {
+            if (banList.elementsContaining(new IPAddressString(ip).getAddress()) != null) {
                 networkConnection.close("IP Blocked by PeerBanHelper");
                 connectionBlockCounter.incrementAndGet();
                 updateCounterLabel();
@@ -427,6 +427,7 @@ public class Plugin implements UnloadablePlugin {
                     if (waitToBan != null) {
                         for (Peer peer : waitToBan) {
                             peerManager.removePeer(peer, PBH_IDENTIFIER, Transport.CR_IP_BLOCKED);
+                            connectionBlockCounter.incrementAndGet();
                         }
                     }
                 });
