@@ -1,17 +1,15 @@
 package com.ghostchu.peerbanhelper.downloaderplug.biglybt;
 
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.SimpleResponse;
-import com.google.gson.Gson;
 import io.javalin.Javalin;
+import io.javalin.config.SizeUnit;
 import io.javalin.http.HttpStatus;
 import io.javalin.json.JsonMapper;
 import io.javalin.plugin.bundled.CorsPluginConfig;
-import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.jetbrains.annotations.NotNull;
 
 import java.lang.reflect.Type;
-import java.util.AbstractMap;
 
 @Slf4j
 public class JavalinWebContainer {
@@ -37,6 +35,7 @@ public class JavalinWebContainer {
                     c.http.generateEtags = true;
                     c.showJavalinBanner = false;
                     c.jsonMapper(gsonMapper);
+                    c.jetty.multipartConfig.maxTotalRequestSize(64, SizeUnit.MB);
                     c.bundledPlugins.enableCors(cors -> cors.addRule(CorsPluginConfig.CorsRule::anyHost));
                 })
                 .exception(Exception.class, (e, ctx) -> {
