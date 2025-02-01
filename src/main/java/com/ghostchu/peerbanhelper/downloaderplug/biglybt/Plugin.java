@@ -28,6 +28,7 @@ import com.biglybt.pifimpl.local.peers.PeerImpl;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.ConnectorData;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.BanBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.BanListReplacementBean;
+import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.PeerThrottlingBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.UnBanBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.serverbound.BatchOperationCallbackBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.serverbound.MetadataCallbackBean;
@@ -144,6 +145,24 @@ public class Plugin implements UnloadablePlugin {
         if (clientIDGeneratorOriginal != null) {
             ClientIDManagerImpl.getSingleton().setGenerator(clientIDGeneratorOriginal, true);
         }
+        for (Download download : getPluginInterface().getDownloadManager().getDownloads()) {
+            for (Peer peer : download.getPeerManager().getPeers()) {
+                Optional<PBHRateLimiter> uploadLimiter = Arrays.stream(peer.getRateLimiters(true))
+                        .filter(rateLimiter -> rateLimiter instanceof PBHRateLimiter)
+                        .map(rateLimiter -> (PBHRateLimiter) rateLimiter).findAny();
+                Optional<PBHRateLimiter> downloadLimiter = Arrays.stream(peer.getRateLimiters(false))
+                        .filter(rateLimiter -> rateLimiter instanceof PBHRateLimiter)
+                        .map(rateLimiter -> (PBHRateLimiter) rateLimiter).findAny();
+                uploadLimiter.ifPresent(pbhRateLimiter -> {
+                    peer.removeRateLimiter(pbhRateLimiter, true);
+                    log.info("Removed upload rate limit for peer {}", peer.getIp());
+                });
+                downloadLimiter.ifPresent(pbhRateLimiter -> {
+                    peer.removeRateLimiter(pbhRateLimiter, false);
+                    log.info("Removed download rate limit for peer {}", peer.getIp());
+                });
+            }
+        }
     }
 
     @Override
@@ -227,7 +246,67 @@ public class Plugin implements UnloadablePlugin {
                 .get("/bans", this::handleBans)
                 .post("/bans", this::handleBanListApplied)
                 .put("/bans", this::handleBanListReplacement)
-                .delete("/bans", this::handleBatchUnban);
+                .delete("/bans", this::handleBatchUnban)
+                .post("/download/{infoHash}/peer/{ip}/throttling", this::handlePeerThrottling);
+    }
+
+    private void handlePeerThrottling(Context ctx) {
+        String arg = ctx.pathParam("infoHash");
+        String ip = ctx.pathParam("ip");
+        PeerThrottlingBean bean = ctx.bodyAsClass(PeerThrottlingBean.class);
+        byte[] infoHash = hexToByteArray(arg);
+        try {
+            Download download = pluginInterface.getDownloadManager().getDownload(infoHash);
+            Peer peer = null;
+            for (Peer p : download.getPeerManager().getPeers()) {
+                if (ip.equals(p.getIp())) {
+                    peer = p;
+                    break;
+                }
+            }
+            if (peer == null) {
+                ctx.status(HttpStatus.NOT_FOUND);
+                return;
+            }
+            // BiglyBT 的 API 这也太炸裂了
+            Optional<PBHRateLimiter> uploadLimiter = Arrays.stream(peer.getRateLimiters(true))
+                    .filter(rateLimiter -> rateLimiter instanceof PBHRateLimiter)
+                    .map(rateLimiter -> (PBHRateLimiter) rateLimiter).findAny();
+            Optional<PBHRateLimiter> downloadLimiter = Arrays.stream(peer.getRateLimiters(false))
+                    .filter(rateLimiter -> rateLimiter instanceof PBHRateLimiter)
+                    .map(rateLimiter -> (PBHRateLimiter) rateLimiter).findAny();
+            if (bean.getUploadRate() != -1) {
+                if (uploadLimiter.isPresent()) {
+                    uploadLimiter.get().setRateLimitBytesPerSecond(bean.getUploadRate());
+                    log.info("Update upload rate limit for peer {} to {}", peer.getIp(), bean.getUploadRate());
+                } else {
+                    peer.addRateLimiter(new PBHRateLimiter(bean.getUploadRate()), true);
+                    log.info("Added upload rate limit for peer {} to {}", peer.getIp(), bean.getUploadRate());
+                }
+            } else {
+                if (uploadLimiter.isPresent()) {
+                    peer.removeRateLimiter(uploadLimiter.get(), true);
+                    log.info("Removed upload rate limit for peer {}", peer.getIp());
+                }
+            }
+            if (bean.getDownloadRate() != -1) {
+                if (downloadLimiter.isPresent()) {
+                    downloadLimiter.get().setRateLimitBytesPerSecond(bean.getDownloadRate());
+                    log.info("Update download rate limit for peer {} to {}", peer.getIp(), bean.getDownloadRate());
+                } else {
+                    peer.addRateLimiter(new PBHRateLimiter(bean.getDownloadRate()), false);
+                    log.info("Added download rate limit for peer {} to {}", peer.getIp(), bean.getDownloadRate());
+                }
+            } else {
+                if (downloadLimiter.isPresent()) {
+                    peer.removeRateLimiter(downloadLimiter.get(), false);
+                    log.info("Removed download rate limit for peer {}", peer.getIp());
+                }
+            }
+            ctx.status(HttpStatus.OK);
+        } catch (DownloadException e) {
+            ctx.status(HttpStatus.NOT_FOUND);
+        }
     }
 
     private void handleTrackersSet(Context ctx) {
