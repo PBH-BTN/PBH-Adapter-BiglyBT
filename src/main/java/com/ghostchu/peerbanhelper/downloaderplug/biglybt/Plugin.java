@@ -10,12 +10,9 @@ import com.biglybt.pif.UnloadablePlugin;
 import com.biglybt.pif.clientid.ClientIDGenerator;
 import com.biglybt.pif.download.Download;
 import com.biglybt.pif.download.DownloadException;
-import com.biglybt.pif.download.DownloadStats;
 import com.biglybt.pif.ipfilter.IPBanned;
-import com.biglybt.pif.messaging.Message;
-import com.biglybt.pif.peers.*;
-import com.biglybt.pif.tag.Tag;
-import com.biglybt.pif.torrent.Torrent;
+import com.biglybt.pif.peers.Peer;
+import com.biglybt.pif.peers.PeerManager;
 import com.biglybt.pif.torrent.TorrentAnnounceURLListSet;
 import com.biglybt.pif.ui.config.BooleanParameter;
 import com.biglybt.pif.ui.config.IntParameter;
@@ -23,8 +20,6 @@ import com.biglybt.pif.ui.config.LabelParameter;
 import com.biglybt.pif.ui.config.StringParameter;
 import com.biglybt.pif.ui.model.BasicPluginConfigModel;
 import com.biglybt.pifimpl.local.clientid.ClientIDManagerImpl;
-import com.biglybt.pifimpl.local.download.DownloadImpl;
-import com.biglybt.pifimpl.local.peers.PeerImpl;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.ConnectorData;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.BanBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.BanListReplacementBean;
@@ -32,15 +27,20 @@ import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientboun
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.UnBanBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.serverbound.BatchOperationCallbackBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.serverbound.MetadataCallbackBean;
-import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.wrapper.*;
+import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.wrapper.DownloadRecord;
+import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.wrapper.StatisticsRecord;
+import com.ghostchu.peerbanhelper.downloaderplug.biglybt.util.ByteUtil;
 import com.google.gson.Gson;
 import inet.ipaddr.IPAddressString;
 import inet.ipaddr.format.util.DualIPv4v6Tries;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.http.HttpStatus;
+import lombok.AllArgsConstructor;
+import lombok.Data;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import org.jetbrains.annotations.Nullable;
 
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -73,69 +73,6 @@ public class Plugin implements UnloadablePlugin {
     private final AtomicLong connectionBlockCounter = new AtomicLong(0);
     private LabelParameter connectionBlockCounterLabel;
 
-    private static TorrentRecord getTorrentRecord(Torrent torrent) {
-        if (torrent == null) return null;
-        return new TorrentRecord(
-                torrent.getName(),
-                torrent.getHash() == null ? null : bytesToHex(torrent.getHash()),
-                torrent.getSize(),
-                torrent.getCreationDate(),
-                torrent.getCreatedBy(),
-                torrent.getPieceSize(),
-                torrent.getPieceCount(),
-                torrent.isDecentralised(),
-                torrent.isPrivate(),
-                torrent.isComplete()
-        );
-    }
-
-    public static String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte aByte : bytes) {
-            String hex = Integer.toHexString(aByte & 0xFF);
-            if (hex.length() < 2) {
-                sb.append(0);
-            }
-            sb.append(hex);
-        }
-        return sb.toString();
-    }
-
-    /**
-     * hex字符串转byte数组
-     *
-     * @param inHex 待转换的Hex字符串
-     * @return 转换后的byte数组结果
-     */
-    public static byte[] hexToByteArray(String inHex) {
-        int hexlen = inHex.length();
-        byte[] result;
-        if (hexlen % 2 == 1) {
-            //奇数
-            hexlen++;
-            result = new byte[(hexlen / 2)];
-            inHex = "0" + inHex;
-        } else {
-            //偶数
-            result = new byte[(hexlen / 2)];
-        }
-        int j = 0;
-        for (int i = 0; i < hexlen; i += 2) {
-            result[j] = hexToByte(inHex.substring(i, i + 2));
-            j++;
-        }
-        return result;
-    }
-
-    /**
-     * Hex字符串转byte
-     *
-     * @param inHex 待转换的Hex字符串
-     * @return 转换后的byte
-     */
-    public static byte hexToByte(String inHex) {
-        return (byte) Integer.parseInt(inHex, 16);
-    }
 
     @Override
     public void unload() {
@@ -145,24 +82,12 @@ public class Plugin implements UnloadablePlugin {
         if (clientIDGeneratorOriginal != null) {
             ClientIDManagerImpl.getSingleton().setGenerator(clientIDGeneratorOriginal, true);
         }
-        for (Download download : getPluginInterface().getDownloadManager().getDownloads()) {
-            for (Peer peer : download.getPeerManager().getPeers()) {
-                Optional<PBHRateLimiter> uploadLimiter = Arrays.stream(peer.getRateLimiters(true))
-                        .filter(rateLimiter -> rateLimiter instanceof PBHRateLimiter)
-                        .map(rateLimiter -> (PBHRateLimiter) rateLimiter).findAny();
-                Optional<PBHRateLimiter> downloadLimiter = Arrays.stream(peer.getRateLimiters(false))
-                        .filter(rateLimiter -> rateLimiter instanceof PBHRateLimiter)
-                        .map(rateLimiter -> (PBHRateLimiter) rateLimiter).findAny();
-                uploadLimiter.ifPresent(pbhRateLimiter -> {
-                    peer.removeRateLimiter(pbhRateLimiter, true);
-                    log.info("Removed upload rate limit for peer {}", peer.getIp());
-                });
-                downloadLimiter.ifPresent(pbhRateLimiter -> {
-                    peer.removeRateLimiter(pbhRateLimiter, false);
-                    log.info("Removed download rate limit for peer {}", peer.getIp());
-                });
+        Arrays.stream(pluginInterface.getDownloadManager().getDownloads()).forEach(download -> {
+            PeerManager peerManager = download.getPeerManager();
+            if (peerManager != null) {
+                Arrays.stream(peerManager.getPeers()).forEach(Plugin::removePBHRateLimiter);
             }
-        }
+        });
     }
 
     @Override
@@ -247,14 +172,25 @@ public class Plugin implements UnloadablePlugin {
                 .post("/bans", this::handleBanListApplied)
                 .put("/bans", this::handleBanListReplacement)
                 .delete("/bans", this::handleBatchUnban)
-                .post("/download/{infoHash}/peer/{ip}/throttling", this::handlePeerThrottling);
+                .post("/download/{infoHash}/peer/{ip}/throttling", this::handlePeerThrottling)
+                .post("/resetThrottling", this::handleResetThrottling);
+    }
+
+    private void handleResetThrottling(Context context) {
+        Arrays.stream(pluginInterface.getDownloadManager().getDownloads()).forEach(download -> {
+            PeerManager peerManager = download.getPeerManager();
+            if (peerManager != null) {
+                Arrays.stream(peerManager.getPeers()).forEach(Plugin::removePBHRateLimiter);
+            }
+        });
+        context.status(HttpStatus.OK);
     }
 
     private void handlePeerThrottling(Context ctx) {
         String arg = ctx.pathParam("infoHash");
         String ip = ctx.pathParam("ip");
         PeerThrottlingBean bean = ctx.bodyAsClass(PeerThrottlingBean.class);
-        byte[] infoHash = hexToByteArray(arg);
+        byte[] infoHash = ByteUtil.hexToByteArray(arg);
         try {
             Download download = pluginInterface.getDownloadManager().getDownload(infoHash);
             Peer peer = null;
@@ -269,39 +205,11 @@ public class Plugin implements UnloadablePlugin {
                 return;
             }
             // BiglyBT 的 API 这也太炸裂了
-            Optional<PBHRateLimiter> uploadLimiter = Arrays.stream(peer.getRateLimiters(true))
-                    .filter(rateLimiter -> rateLimiter instanceof PBHRateLimiter)
-                    .map(rateLimiter -> (PBHRateLimiter) rateLimiter).findAny();
-            Optional<PBHRateLimiter> downloadLimiter = Arrays.stream(peer.getRateLimiters(false))
-                    .filter(rateLimiter -> rateLimiter instanceof PBHRateLimiter)
-                    .map(rateLimiter -> (PBHRateLimiter) rateLimiter).findAny();
-            if (bean.getUploadRate() != -1) {
-                if (uploadLimiter.isPresent()) {
-                    uploadLimiter.get().setRateLimitBytesPerSecond(bean.getUploadRate());
-                    log.info("Update upload rate limit for peer {} to {}", peer.getIp(), bean.getUploadRate());
-                } else {
-                    peer.addRateLimiter(new PBHRateLimiter(bean.getUploadRate()), true);
-                    log.info("Added upload rate limit for peer {} to {}", peer.getIp(), bean.getUploadRate());
-                }
-            } else {
-                if (uploadLimiter.isPresent()) {
-                    peer.removeRateLimiter(uploadLimiter.get(), true);
-                    log.info("Removed upload rate limit for peer {}", peer.getIp());
-                }
+            if (bean.getUploadRate() == -1 && bean.getDownloadRate() == -1) {
+                removePBHRateLimiter(peer);
             }
-            if (bean.getDownloadRate() != -1) {
-                if (downloadLimiter.isPresent()) {
-                    downloadLimiter.get().setRateLimitBytesPerSecond(bean.getDownloadRate());
-                    log.info("Update download rate limit for peer {} to {}", peer.getIp(), bean.getDownloadRate());
-                } else {
-                    peer.addRateLimiter(new PBHRateLimiter(bean.getDownloadRate()), false);
-                    log.info("Added download rate limit for peer {} to {}", peer.getIp(), bean.getDownloadRate());
-                }
-            } else {
-                if (downloadLimiter.isPresent()) {
-                    peer.removeRateLimiter(downloadLimiter.get(), false);
-                    log.info("Removed download rate limit for peer {}", peer.getIp());
-                }
+            if (bean.getUploadRate() != -1 || bean.getDownloadRate() != -1) {
+                setPBHRateLimiter(peer, bean.getUploadRate(), bean.getDownloadRate());
             }
             ctx.status(HttpStatus.OK);
         } catch (DownloadException e) {
@@ -311,7 +219,7 @@ public class Plugin implements UnloadablePlugin {
 
     private void handleTrackersSet(Context ctx) {
         String arg = ctx.pathParam("infoHash");
-        byte[] infoHash = hexToByteArray(arg);
+        byte[] infoHash = ByteUtil.hexToByteArray(arg);
         String trackers = ctx.body();
         try {
             Download download = pluginInterface.getDownloadManager().getDownload(infoHash);
@@ -382,7 +290,7 @@ public class Plugin implements UnloadablePlugin {
                 banList.add(new IPAddressString(s).getAddress());
                 success.incrementAndGet();
             } catch (Exception e) {
-                e.printStackTrace();
+                log.error("Failed to apply banlist for IP: {}", s, e);
                 failed.incrementAndGet();
             }
         }
@@ -405,7 +313,7 @@ public class Plugin implements UnloadablePlugin {
         for (Download download : pluginInterface.getDownloadManager().getDownloads()) {
             boolean shouldAddToResultSet = filter.isEmpty() || filter.contains(download.getState());
             if (shouldAddToResultSet) {
-                records.add(getDownloadRecord(download));
+                records.add(DataConverter.getDownloadRecord(download));
             }
         }
         ctx.status(HttpStatus.OK);
@@ -434,7 +342,7 @@ public class Plugin implements UnloadablePlugin {
                 banList.remove(new IPAddressString(ip).getAddress());
                 unbanned.incrementAndGet();
             } catch (Exception e) {
-                e.printStackTrace();
+                log.error("Failed to unban IP: {}", ip, e);
                 failed.incrementAndGet();
             }
         }
@@ -444,7 +352,7 @@ public class Plugin implements UnloadablePlugin {
 
     public void handleDownload(Context ctx) {
         String arg = ctx.pathParam("infoHash");
-        byte[] infoHash = hexToByteArray(arg);
+        byte[] infoHash = ByteUtil.hexToByteArray(arg);
         try {
             Download download = pluginInterface.getDownloadManager().getDownload(infoHash);
             if (download == null) {
@@ -452,7 +360,7 @@ public class Plugin implements UnloadablePlugin {
                 return;
             }
             ctx.status(HttpStatus.OK);
-            ctx.json(getDownloadRecord(download));
+            ctx.json(DataConverter.getDownloadRecord(download));
         } catch (DownloadException e) {
             ctx.status(HttpStatus.NOT_FOUND);
         }
@@ -460,18 +368,14 @@ public class Plugin implements UnloadablePlugin {
 
     public void handlePeers(Context ctx) {
         String arg = ctx.pathParam("infoHash");
-        byte[] infoHash = hexToByteArray(arg);
+        byte[] infoHash = ByteUtil.hexToByteArray(arg);
         try {
             Download download = pluginInterface.getDownloadManager().getDownload(infoHash);
-            if (download == null) {
+            if (download == null || download.getPeerManager() == null) {
                 ctx.status(HttpStatus.NOT_FOUND);
                 return;
             }
-            if (download.getPeerManager() == null) {
-                ctx.status(HttpStatus.NOT_FOUND);
-                return;
-            }
-            ctx.json(getPeerManagerRecord(download.getPeerManager()));
+            ctx.json(DataConverter.getPeerManagerRecord(download.getPeerManager()));
         } catch (DownloadException e) {
             ctx.status(HttpStatus.NOT_FOUND);
         }
@@ -488,7 +392,7 @@ public class Plugin implements UnloadablePlugin {
                 banList.add(new IPAddressString(s).getAddress());
                 success.incrementAndGet();
             } catch (Exception e) {
-                e.printStackTrace();
+                log.error("Failed to apply banlist for IP: {}", s, e);
                 failed.incrementAndGet();
             }
         }
@@ -514,166 +418,51 @@ public class Plugin implements UnloadablePlugin {
         });
     }
 
-    private DownloadStatsRecord getDownloadStatsRecord(DownloadStats stats) {
-        if (stats == null) return null;
-        return new DownloadStatsRecord(
-                stats.getStatus(),
-                stats.getCompleted(),
-                stats.getCheckingDoneInThousandNotation(),
-                stats.getDownloaded(),
-                stats.getDownloaded(true),
-                stats.getRemaining(),
-                stats.getRemainingExcludingDND(),
-                stats.getUploaded(),
-                stats.getUploaded(true),
-                stats.getDiscarded(),
-                stats.getDownloadAverage(),
-                stats.getDownloadAverage(true),
-                stats.getUploadAverage(),
-                stats.getUploadAverage(true),
-                stats.getTotalAverage(),
-                stats.getHashFails(),
-                stats.getShareRatio(),
-                stats.getTimeStarted(),
-                stats.getTimeStartedSeeding(),
-                stats.getAvailability(),
-                stats.getHealth(),
-                stats.getBytesUnavailable()
-        );
-    }
-
-    private DownloadRecord getDownloadRecord(Download download) {
-        if (download == null) return null;
-        DownloadImpl downloadImpl = (DownloadImpl) download;
-        List<List<String>> trackers = new ArrayList<>();
-        for (TorrentAnnounceURLListSet set : downloadImpl.getTorrent().getAnnounceURLList().getSets()) {
-            trackers.add(Arrays.stream(set.getURLs()).map(Object::toString).collect(Collectors.toList()));
+    public static void removePBHRateLimiter(Peer peer) {
+        PeerRateLimiterLookupResult rateLimiterLookupResult = getPBHRateLimiter(peer);
+        if (rateLimiterLookupResult.getUploadLimiter() != null) {
+            peer.removeRateLimiter(rateLimiterLookupResult.getUploadLimiter(), true);
+            log.info("Removed upload rate limit for peer {}", peer.getIp());
         }
-        DownloadStatsRecord downloadStatsRecord = getDownloadStatsRecord(download.getStats());
-        TorrentRecord torrentRecord = getTorrentRecord(download.getTorrent());
-        return new DownloadRecord(
-                download.getState(),
-                download.getSubState(),
-                download.getFlags(),
-                torrentRecord,
-                download.isForceStart(),
-                download.isPaused(),
-                download.getName(),
-                download.getCategoryName(),
-                download.getTags().stream().map(Tag::getTagName).collect(Collectors.toList()),
-                download.getPosition(),
-                download.getCreationTime(),
-                downloadStatsRecord,
-                download.isComplete(),
-                download.isChecking(),
-                download.isMoving(),
-                download.getDownloadPeerId() == null ? null : bytesToHex(download.getDownloadPeerId()).toLowerCase(Locale.ROOT),
-                download.isRemoved(),
-                trackers);
-    }
-
-    private PeerManagerRecord getPeerManagerRecord(PeerManager peerManager) {
-        if (peerManager == null) return null;
-        return new PeerManagerRecord(
-                Arrays.stream(peerManager.getPeers()).map(this::getPeerRecord).filter(Objects::nonNull).collect(Collectors.toList()),
-                Arrays.stream(peerManager.getPendingPeers()).map(this::getDescriptorRecord).filter(Objects::nonNull).collect(Collectors.toList()),
-                getPeerManagerStatsRecord(peerManager.getStats()),
-                peerManager.isSeeding(),
-                peerManager.isSuperSeeding()
-        );
-    }
-
-    private PeerManagerStatsRecord getPeerManagerStatsRecord(PeerManagerStats stats) {
-        if (stats == null) return null;
-        return new PeerManagerStatsRecord(
-                stats.getConnectedSeeds(),
-                stats.getConnectedLeechers(),
-                stats.getDownloaded(),
-                stats.getUploaded(),
-                stats.getDownloadAverage(),
-                stats.getUploadAverage(),
-                stats.getDiscarded(),
-                stats.getHashFailBytes(),
-                stats.getPermittedBytesToReceive(),
-                stats.getPermittedBytesToSend()
-        );
-    }
-
-    private PeerDescriptorRecord getDescriptorRecord(PeerDescriptor peerDescriptor) {
-        if (peerDescriptor == null) return null;
-        return new PeerDescriptorRecord(
-                peerDescriptor.getIP(),
-                peerDescriptor.getTCPPort(),
-                peerDescriptor.getUDPPort(),
-                peerDescriptor.useCrypto(),
-                peerDescriptor.getPeerSource()
-        );
-    }
-
-    private PeerRecord getPeerRecord(Peer peer) {
-        if (peer == null) return null;
-        String client = peer.getClient();
-        if (peer instanceof PeerImpl) {
-            client = ((PeerImpl) peer).getDelegate().getClientNameFromExtensionHandshake();
+        if (rateLimiterLookupResult.getDownloadLimiter() != null) {
+            peer.removeRateLimiter(rateLimiterLookupResult.getDownloadLimiter(), false);
+            log.info("Removed download rate limit for peer {}", peer.getIp());
         }
-        if (peer.getIp().endsWith(".i2p") || peer.getIp().endsWith(".onion") || peer.getIp().endsWith(".tor"))
-            return null;
-        com.biglybt.pif.messaging.Message[] messages = new Message[0];
-        if (peer.supportsMessaging()) {
-            messages = peer.getSupportedMessages();
+    }
+
+    public static void setPBHRateLimiter(Peer peer, int uploadRate, int downloadRate) {
+        removePBHRateLimiter(peer);
+        if (uploadRate != -1) {
+            PBHRateLimiter uploadLimiter = new PBHRateLimiter(uploadRate);
+            peer.addRateLimiter(uploadLimiter, true);
+            log.info("Set upload rate limit for peer {} to {}", peer.getIp(), uploadRate);
         }
+        if (downloadRate != -1) {
+            PBHRateLimiter downloadLimiter = new PBHRateLimiter(downloadRate);
+            peer.addRateLimiter(downloadLimiter, false);
+            log.info("Set download rate limit for peer {} to {}", peer.getIp(), downloadRate);
+        }
+    }
+
+    public static PeerRateLimiterLookupResult getPBHRateLimiter(Peer peer) {
         Optional<PBHRateLimiter> uploadLimiter = Arrays.stream(peer.getRateLimiters(true))
                 .filter(rateLimiter -> rateLimiter instanceof PBHRateLimiter)
                 .map(rateLimiter -> (PBHRateLimiter) rateLimiter).findAny();
         Optional<PBHRateLimiter> downloadLimiter = Arrays.stream(peer.getRateLimiters(false))
                 .filter(rateLimiter -> rateLimiter instanceof PBHRateLimiter)
                 .map(rateLimiter -> (PBHRateLimiter) rateLimiter).findAny();
-        return new PeerRecord(
-                peer.isMyPeer(),
-                peer.getState(),
-                peer.getId() == null ? null : bytesToHex(peer.getId()),
-                peer.getIp(),
-                peer.getTCPListenPort(),
-                peer.getUDPListenPort(),
-                peer.getUDPNonDataListenPort(),
-                peer.getPort(),
-                peer.isLANLocal(),
-                peer.isTransferAvailable(),
-                peer.isDownloadPossible(),
-                peer.isChoked(),
-                peer.isChoking(),
-                peer.isInterested(),
-                peer.isInteresting(),
-                peer.isSeed(),
-                peer.isSnubbed(),
-                peer.getSnubbedTime(),
-                getPeerStatsRecord(peer.getStats()),
-                peer.isIncoming(),
-                peer.getPercentDoneInThousandNotation(),
-                client,
-                peer.isOptimisticUnchoke(),
-                peer.supportsMessaging(),
-                peer.isPriorityConnection(),
-                peer.getHandshakeReservedBytes(),
-                Arrays.stream(messages).map(Message::getID).collect(Collectors.toList()),
-                uploadLimiter.isPresent() || downloadLimiter.isPresent()
-        );
+        return new PeerRateLimiterLookupResult(uploadLimiter.orElse(null), downloadLimiter.orElse(null));
     }
 
-    private PeerStatsRecord getPeerStatsRecord(PeerStats stats) {
-        if (stats == null) return null;
-        return new PeerStatsRecord(
-                stats.getDownloadAverage(),
-                stats.getReception(),
-                stats.getUploadAverage(),
-                stats.getTotalAverage(),
-                stats.getTotalDiscarded(),
-                stats.getTotalSent(),
-                stats.getTotalReceived(),
-                stats.getStatisticSentAverage(),
-                stats.getPermittedBytesToReceive(),
-                stats.getPermittedBytesToSend(),
-                stats.getOverallBytesRemaining()
-        );
+
+    @Data
+    @AllArgsConstructor
+    public static class PeerRateLimiterLookupResult {
+        @Nullable
+        private final PBHRateLimiter uploadLimiter;
+        @Nullable
+        private final PBHRateLimiter downloadLimiter;
     }
+
+
 }
