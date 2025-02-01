@@ -408,7 +408,8 @@ public class Plugin implements UnloadablePlugin {
     }
 
     private void cleanupPeers(List<String> peers) {
-        Arrays.stream(pluginInterface.getDownloadManager().getDownloads()).forEach(download -> {
+        Arrays.stream(pluginInterface.getDownloadManager().getDownloads())
+                .filter(d->d.getState() == Download.ST_DOWNLOADING || d.getState() == Download.ST_SEEDING).forEach(download -> {
             PeerManager peerManager = download.getPeerManager();
             if (peerManager != null) {
                 peers.forEach(ip -> {
