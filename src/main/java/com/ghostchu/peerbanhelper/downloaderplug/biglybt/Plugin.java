@@ -72,6 +72,7 @@ public class Plugin implements UnloadablePlugin {
     private final DualIPv4v6Tries banList = new DualIPv4v6Tries();
     private final AtomicLong connectionBlockCounter = new AtomicLong(0);
     private LabelParameter connectionBlockCounterLabel;
+    private static final Exception closePeerException = new Exception("IP Blocked by PeerBanHelper, Force interrupted.");
 
 
     @Override
@@ -123,10 +124,15 @@ public class Plugin implements UnloadablePlugin {
             var ip = sockAddress.getAddress().getHostAddress();
             if (banList.elementsContaining(new IPAddressString(ip).getAddress()) != null) {
                 networkConnection.close("IP Blocked by PeerBanHelper");
+                cleanupPeers(List.of(ip));
                 connectionBlockCounter.incrementAndGet();
                 updateCounterLabel();
             }
         });
+        replaceIpBanner();
+    }
+
+    private void replaceIpBanner() {
     }
 
     private void updateCounterLabel() {
