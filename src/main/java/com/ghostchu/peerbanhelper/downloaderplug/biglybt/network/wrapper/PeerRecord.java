@@ -40,4 +40,5 @@ public class PeerRecord {
     private boolean priorityConnection;
     private byte[] handshakeReservedBytes;
     private List<String> peerSupportedMessages;
+    private boolean isPBHThrottled;
 }

@@ -622,6 +622,12 @@ public class Plugin implements UnloadablePlugin {
         if (peer.supportsMessaging()) {
             messages = peer.getSupportedMessages();
         }
+        Optional<PBHRateLimiter> uploadLimiter = Arrays.stream(peer.getRateLimiters(true))
+                .filter(rateLimiter -> rateLimiter instanceof PBHRateLimiter)
+                .map(rateLimiter -> (PBHRateLimiter) rateLimiter).findAny();
+        Optional<PBHRateLimiter> downloadLimiter = Arrays.stream(peer.getRateLimiters(false))
+                .filter(rateLimiter -> rateLimiter instanceof PBHRateLimiter)
+                .map(rateLimiter -> (PBHRateLimiter) rateLimiter).findAny();
         return new PeerRecord(
                 peer.isMyPeer(),
                 peer.getState(),
@@ -649,7 +655,8 @@ public class Plugin implements UnloadablePlugin {
                 peer.supportsMessaging(),
                 peer.isPriorityConnection(),
                 peer.getHandshakeReservedBytes(),
-                Arrays.stream(messages).map(Message::getID).collect(Collectors.toList())
+                Arrays.stream(messages).map(Message::getID).collect(Collectors.toList()),
+                uploadLimiter.isPresent() || downloadLimiter.isPresent()
         );
     }
 
