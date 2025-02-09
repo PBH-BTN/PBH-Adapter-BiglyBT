@@ -319,7 +319,10 @@ public class Plugin implements UnloadablePlugin {
         for (Download download : pluginInterface.getDownloadManager().getDownloads()) {
             boolean shouldAddToResultSet = filter.isEmpty() || filter.contains(download.getState());
             if (shouldAddToResultSet) {
-                records.add(DataConverter.getDownloadRecord(download));
+                var d = DataConverter.getDownloadRecord(download);
+                if (d != null) {
+                    records.add(d);
+                }
             }
         }
         ctx.status(HttpStatus.OK);
@@ -409,20 +412,20 @@ public class Plugin implements UnloadablePlugin {
 
     private void cleanupPeers(List<String> peers) {
         Arrays.stream(pluginInterface.getDownloadManager().getDownloads())
-                .filter(d->d.getState() == Download.ST_DOWNLOADING || d.getState() == Download.ST_SEEDING).forEach(download -> {
-            PeerManager peerManager = download.getPeerManager();
-            if (peerManager != null) {
-                peers.forEach(ip -> {
-                    Peer[] waitToBan = peerManager.getPeers(ip);
-                    if (waitToBan != null) {
-                        for (Peer peer : waitToBan) {
-                            peerManager.removePeer(peer, PBH_IDENTIFIER, Transport.CR_IP_BLOCKED);
-                            connectionBlockCounter.incrementAndGet();
-                        }
+                .filter(d -> d.getState() == Download.ST_DOWNLOADING || d.getState() == Download.ST_SEEDING).forEach(download -> {
+                    PeerManager peerManager = download.getPeerManager();
+                    if (peerManager != null) {
+                        peers.forEach(ip -> {
+                            Peer[] waitToBan = peerManager.getPeers(ip);
+                            if (waitToBan != null) {
+                                for (Peer peer : waitToBan) {
+                                    peerManager.removePeer(peer, PBH_IDENTIFIER, Transport.CR_IP_BLOCKED);
+                                    connectionBlockCounter.incrementAndGet();
+                                }
+                            }
+                        });
                     }
                 });
-            }
-        });
     }
 
     public static void removePBHRateLimiter(Peer peer) {

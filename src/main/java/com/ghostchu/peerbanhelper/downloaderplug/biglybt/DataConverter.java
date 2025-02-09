@@ -63,6 +63,8 @@ public class DataConverter {
 
     public static DownloadRecord getDownloadRecord(Download download) {
         if (download == null) return null;
+        if (download.getTorrent() == null) return null;
+
         DownloadImpl downloadImpl = (DownloadImpl) download;
         List<List<String>> trackers = new ArrayList<>();
         for (TorrentAnnounceURLListSet set : downloadImpl.getTorrent().getAnnounceURLList().getSets()) {
