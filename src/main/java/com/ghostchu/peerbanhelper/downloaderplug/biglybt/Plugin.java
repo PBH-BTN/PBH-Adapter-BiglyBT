@@ -11,6 +11,8 @@ import com.biglybt.pif.clientid.ClientIDGenerator;
 import com.biglybt.pif.download.Download;
 import com.biglybt.pif.download.DownloadException;
 import com.biglybt.pif.ipfilter.IPBanned;
+import com.biglybt.pif.ipfilter.IPFilter;
+import com.biglybt.pif.ipfilter.IPFilterException;
 import com.biglybt.pif.peers.Peer;
 import com.biglybt.pif.peers.PeerManager;
 import com.biglybt.pif.torrent.TorrentAnnounceURLListSet;
@@ -73,6 +75,7 @@ public class Plugin implements UnloadablePlugin {
     private final AtomicLong connectionBlockCounter = new AtomicLong(0);
     private LabelParameter connectionBlockCounterLabel;
     private static final Exception closePeerException = new Exception("IP Blocked by PeerBanHelper, Force interrupted.");
+    private boolean useIpBanner = true;
 
 
     @Override
@@ -114,6 +117,11 @@ public class Plugin implements UnloadablePlugin {
             this.useClientIdModifier = clientIdModifier.getValue();
             saveAndReload();
         });
+        BooleanParameter useIpBannerParam = configModel.addBooleanParameter2("use-ip-banner", "peerbanhelper.useipbanner", useIpBanner);
+        useIpBannerParam.addListener(lis -> {
+            this.useIpBanner = useIpBannerParam.getValue();
+            saveAndReload();
+        });
         connectionBlockCounterLabel = configModel.addLabelParameter2("peerbanhelper.connectionBlockCounter");
         updateCounterLabel();
         saveAndReload();
@@ -143,6 +151,7 @@ public class Plugin implements UnloadablePlugin {
         cfg.setPluginParameter("web.token", token);
         cfg.setPluginParameter("web.port", port);
         cfg.setPluginParameter("bt.useClientIdModifier", useClientIdModifier);
+        cfg.setPluginParameter("use-ip-banner", useIpBanner);
         try {
             this.cfg.save();
         } catch (Exception e) {
@@ -287,8 +296,9 @@ public class Plugin implements UnloadablePlugin {
         context.json(callbackBean);
     }
 
-    private void handleBanListApplied(Context context) {
+    private void handleBanListApplied(Context context) throws IPFilterException {
         BanBean banBean = context.bodyAsClass(BanBean.class);
+        IPFilter ipFilter = pluginInterface.getIPFilter();
         AtomicInteger success = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
         for (String s : banBean.getIps()) {
@@ -300,9 +310,42 @@ public class Plugin implements UnloadablePlugin {
                 failed.incrementAndGet();
             }
         }
+        if(useIpBanner) {
+            runIPFilterOperation(() -> {
+                for (String s : banBean.getIps()) {
+                    try {
+                        ipFilter.ban(s, PBH_IDENTIFIER);
+                        success.incrementAndGet();
+                    } catch (Exception e) {
+                        log.error("Failed to apply banlist for IP: {}", s, e);
+                        failed.incrementAndGet();
+                    }
+                }
+            });
+        }
         cleanupPeers(banBean.getIps());
         context.status(HttpStatus.OK);
         context.json(new BatchOperationCallbackBean(success.get(), failed.get()));
+    }
+
+    public void runIPFilterOperation(Runnable runnable) throws IPFilterException {
+        BAN_LIST_OPERATION_LOCK.lock();
+        try {
+            var originalPersistentSetting = COConfigurationManager.getBooleanParameter("Ip Filter Banning Persistent");
+            //originalPersistentSetting = false;
+            try {
+                COConfigurationManager.setParameter("Ip Filter Banning Persistent", false);
+                COConfigurationManager.setParameter("Ip Filter Ban Block Limit", 256);
+                runnable.run();
+            } finally {
+                COConfigurationManager.setParameter("Ip Filter Banning Persistent", originalPersistentSetting);
+                if (originalPersistentSetting) {
+                    this.pluginInterface.getIPFilter().save();
+                }
+            }
+        } finally {
+            BAN_LIST_OPERATION_LOCK.unlock();
+        }
     }
 
     public ConnectorData getConnectorData() {
@@ -342,7 +385,7 @@ public class Plugin implements UnloadablePlugin {
         ctx.json(banned);
     }
 
-    private void handleBatchUnban(Context ctx) {
+    private void handleBatchUnban(Context ctx) throws IPFilterException {
         UnBanBean banBean = ctx.bodyAsClass(UnBanBean.class);
         AtomicInteger unbanned = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
@@ -354,6 +397,19 @@ public class Plugin implements UnloadablePlugin {
                 log.error("Failed to unban IP: {}", ip, e);
                 failed.incrementAndGet();
             }
+        }
+        if(useIpBanner){
+            runIPFilterOperation(() -> {
+                for (String ip : banBean.getIps()) {
+                    try {
+                        pluginInterface.getIPFilter().unban(ip);
+                        unbanned.incrementAndGet();
+                    } catch (Exception e) {
+                        log.error("Failed to unban IP: {}", ip, e);
+                        failed.incrementAndGet();
+                    }
+                }
+            });
         }
         ctx.status(HttpStatus.OK);
         ctx.json(new BatchOperationCallbackBean(unbanned.get(), failed.get()));
@@ -390,7 +446,7 @@ public class Plugin implements UnloadablePlugin {
         }
     }
 
-    public void handleBanListReplacement(Context ctx) {
+    public void handleBanListReplacement(Context ctx) throws IPFilterException {
         BanListReplacementBean replacementBean = ctx.bodyAsClass(BanListReplacementBean.class);
         AtomicInteger success = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
@@ -404,6 +460,25 @@ public class Plugin implements UnloadablePlugin {
                 log.error("Failed to apply banlist for IP: {}", s, e);
                 failed.incrementAndGet();
             }
+        }
+        if(useIpBanner){
+            runIPFilterOperation(() -> {
+                IPFilter ipFilter = pluginInterface.getIPFilter();
+                for (IPBanned blockedIP : ipFilter.getBannedIPs()) {
+                    if (PBH_IDENTIFIER.equals(blockedIP.getBannedTorrentName()) || replacementBean.isIncludeNonPBHEntries()) {
+                        ipFilter.unban(blockedIP.getBannedIP());
+                    }
+                }
+                for (String s : replacementBean.getReplaceWith()) {
+                    try {
+                        ipFilter.ban(s, PBH_IDENTIFIER);
+                        success.incrementAndGet();
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        failed.incrementAndGet();
+                    }
+                }
+            });
         }
         cleanupPeers(replacementBean.getReplaceWith());
         ctx.status(HttpStatus.OK);
