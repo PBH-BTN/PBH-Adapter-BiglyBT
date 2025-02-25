@@ -76,9 +76,6 @@ public class Plugin implements UnloadablePlugin {
     private final DualIPv4v6Tries banList = new DualIPv4v6Tries();
     private final AtomicLong connectionBlockCounter = new AtomicLong(0);
     private LabelParameter connectionBlockCounterLabel;
-    private static final Exception closePeerException = new Exception("IP Blocked by PeerBanHelper, Force interrupted.");
-    private boolean useIpBanner = true;
-
 
     @Override
     public void unload() {
@@ -155,7 +152,6 @@ public class Plugin implements UnloadablePlugin {
         cfg.setPluginParameter("web.token", token);
         cfg.setPluginParameter("web.port", port);
         cfg.setPluginParameter("bt.useClientIdModifier", useClientIdModifier);
-        cfg.setPluginParameter("use-ip-banner", useIpBanner);
         try {
             this.cfg.save();
         } catch (Exception e) {
