@@ -123,20 +123,26 @@ public class Plugin implements UnloadablePlugin {
         IpFilterManagerFactory.getSingleton().getIPFilter().addExternalHandler(new IpFilterExternalHandler() {
             @Override
             public boolean isBlocked(byte[] bytes, String s) {
-                if (banList.elementsContaining(new IPAddressString(s).getAddress()) != null) {
-                    connectionBlockCounter.incrementAndGet();
-                    updateCounterLabel();
-                    return true;
+                try {
+                    if (banList.elementsContaining(new IPAddressString(s).getAddress()) != null) {
+                        connectionBlockCounter.incrementAndGet();
+                        updateCounterLabel();
+                        return true;
+                    }
+                } catch (Exception ignored) {
                 }
                 return false;
             }
 
             @Override
             public boolean isBlocked(byte[] bytes, InetAddress inetAddress) {
-                if (banList.elementsContaining(new IPAddressString(inetAddress.getHostAddress()).getAddress()) != null) {
-                    connectionBlockCounter.incrementAndGet();
-                    updateCounterLabel();
-                    return true;
+                try {
+                    if (banList.elementsContaining(new IPAddressString(inetAddress.getHostAddress()).getAddress()) != null) {
+                        connectionBlockCounter.incrementAndGet();
+                        updateCounterLabel();
+                        return true;
+                    }
+                } catch (Exception ignored) {
                 }
                 return false;
             }
