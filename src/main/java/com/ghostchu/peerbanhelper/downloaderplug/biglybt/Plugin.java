@@ -24,11 +24,9 @@ import com.biglybt.pif.ui.config.StringParameter;
 import com.biglybt.pif.ui.model.BasicPluginConfigModel;
 import com.biglybt.pifimpl.local.clientid.ClientIDManagerImpl;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.ConnectorData;
-import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.BanBean;
-import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.BanListReplacementBean;
-import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.PeerThrottlingBean;
-import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.UnBanBean;
+import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.*;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.serverbound.BatchOperationCallbackBean;
+import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.serverbound.CurrentSpeedLimiterBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.serverbound.MetadataCallbackBean;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.wrapper.DownloadRecord;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.wrapper.StatisticsRecord;
@@ -43,6 +41,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.net.InetAddress;
@@ -54,6 +53,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
+
+import static com.biglybt.core.config.ConfigKeys.Transfer.ICFG_MAX_DOWNLOAD_SPEED_KBS;
+import static com.biglybt.core.config.ConfigKeys.Transfer.ICFG_MAX_UPLOAD_SPEED_KBS;
 
 @Slf4j
 @Getter
@@ -194,7 +196,23 @@ public class Plugin implements UnloadablePlugin {
                 .put("/bans", this::handleBanListReplacement)
                 .delete("/bans", this::handleBatchUnban)
                 .post("/download/{infoHash}/peer/{ip}/throttling", this::handlePeerThrottling)
-                .post("/resetThrottling", this::handleResetThrottling);
+                .post("/resetThrottling", this::handleResetThrottling)
+                .get("/speedlimiter", this::handleSpeedLimiter)
+                .post("/speedlimiter", this::handleSetSpeedLimiter);
+    }
+
+    private void handleSetSpeedLimiter(@NotNull Context context) {
+        SetSpeedLimiterBean bean = context.bodyAsClass(SetSpeedLimiterBean.class);
+        long uploadBytesPerSec = Math.max(bean.getUpload(), 0);
+        long downloadBytesPerSec = Math.max(bean.getDownload(), 0);
+        COConfigurationManager.setParameter(ICFG_MAX_DOWNLOAD_SPEED_KBS, downloadBytesPerSec / 1024);
+        COConfigurationManager.setParameter(ICFG_MAX_UPLOAD_SPEED_KBS, uploadBytesPerSec / 1024);
+    }
+
+    private void handleSpeedLimiter(@NotNull Context context) {
+        long uploadBytesPerSec = COConfigurationManager.getIntParameter(ICFG_MAX_UPLOAD_SPEED_KBS) * 1024;
+        long downloadBytesPerSec = COConfigurationManager.getIntParameter(ICFG_MAX_DOWNLOAD_SPEED_KBS) * 1024;
+        context.json(new CurrentSpeedLimiterBean(uploadBytesPerSec, downloadBytesPerSec));
     }
 
     private void handleResetThrottling(Context context) {
