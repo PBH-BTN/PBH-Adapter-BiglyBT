@@ -54,6 +54,8 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
+import static com.biglybt.core.config.ConfigKeys.Connection.BCFG_LISTEN_PORT_RANDOMIZE_ENABLE;
+import static com.biglybt.core.config.ConfigKeys.Connection.ICFG_TCP_LISTEN_PORT;
 import static com.biglybt.core.config.ConfigKeys.Transfer.ICFG_MAX_DOWNLOAD_SPEED_KBS;
 import static com.biglybt.core.config.ConfigKeys.Transfer.ICFG_MAX_UPLOAD_SPEED_KBS;
 
@@ -198,7 +200,20 @@ public class Plugin implements UnloadablePlugin {
                 .post("/download/{infoHash}/peer/{ip}/throttling", this::handlePeerThrottling)
                 .post("/resetThrottling", this::handleResetThrottling)
                 .get("/speedlimiter", this::handleSpeedLimiter)
-                .post("/speedlimiter", this::handleSetSpeedLimiter);
+                .post("/speedlimiter", this::handleSetSpeedLimiter)
+                .get("/listenport", this::handleGetListenPort)
+                .post("/listenport", this::handleSetListenPort);
+    }
+
+    private void handleSetListenPort(@NotNull Context context) {
+        SetListenPort bean = context.bodyAsClass(SetListenPort.class);
+        COConfigurationManager.setParameter(BCFG_LISTEN_PORT_RANDOMIZE_ENABLE, false);
+        COConfigurationManager.setParameter(ICFG_TCP_LISTEN_PORT, bean.getPort());
+    }
+
+    private void handleGetListenPort(@NotNull Context context) {
+        int port = COConfigurationManager.getIntParameter(ICFG_TCP_LISTEN_PORT);
+        context.json(new SetListenPort(port));
     }
 
     private void handleSetSpeedLimiter(@NotNull Context context) {
