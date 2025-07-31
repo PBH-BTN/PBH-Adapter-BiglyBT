@@ -3,6 +3,7 @@ package com.ghostchu.peerbanhelper.downloaderplug.biglybt;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.SimpleResponse;
 import io.javalin.Javalin;
 import io.javalin.config.SizeUnit;
+import io.javalin.http.Header;
 import io.javalin.http.HttpStatus;
 import io.javalin.json.JsonMapper;
 import io.javalin.plugin.bundled.CorsPluginConfig;
@@ -63,6 +64,9 @@ public class JavalinWebContainer {
                         }
                     }
                     throw new APINotLoggedInException();
+                })
+                .after(handler->{
+                    handler.header(Header.SERVER, "PeerBanHelper-BiglyBT-Adapter/");
                 })
                 .start(host, port);
     }
