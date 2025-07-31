@@ -65,9 +65,7 @@ public class JavalinWebContainer {
                     }
                     throw new APINotLoggedInException();
                 })
-                .after(handler->{
-                    handler.header(Header.SERVER, "PeerBanHelper-BiglyBT-Adapter/");
-                })
+                .after(handler-> handler.header(Header.SERVER, "PeerBanHelper-BiglyBT-Adapter"))
                 .start(host, port);
     }
 
