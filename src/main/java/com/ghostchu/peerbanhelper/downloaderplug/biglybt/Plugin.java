@@ -12,8 +12,6 @@ import com.biglybt.pif.clientid.ClientIDGenerator;
 import com.biglybt.pif.download.Download;
 import com.biglybt.pif.download.DownloadException;
 import com.biglybt.pif.ipfilter.IPBanned;
-import com.biglybt.pif.ipfilter.IPFilter;
-import com.biglybt.pif.ipfilter.IPFilterException;
 import com.biglybt.pif.peers.Peer;
 import com.biglybt.pif.peers.PeerManager;
 import com.biglybt.pif.torrent.TorrentAnnounceURLListSet;
@@ -56,8 +54,7 @@ import java.util.stream.Collectors;
 
 import static com.biglybt.core.config.ConfigKeys.Connection.BCFG_LISTEN_PORT_RANDOMIZE_ENABLE;
 import static com.biglybt.core.config.ConfigKeys.Connection.ICFG_TCP_LISTEN_PORT;
-import static com.biglybt.core.config.ConfigKeys.Transfer.ICFG_MAX_DOWNLOAD_SPEED_KBS;
-import static com.biglybt.core.config.ConfigKeys.Transfer.ICFG_MAX_UPLOAD_SPEED_KBS;
+import static com.biglybt.core.config.ConfigKeys.Transfer.*;
 
 @Slf4j
 @Getter
@@ -220,13 +217,13 @@ public class Plugin implements UnloadablePlugin {
         SetSpeedLimiterBean bean = context.bodyAsClass(SetSpeedLimiterBean.class);
         long uploadBytesPerSec = Math.max(bean.getUpload(), 0);
         long downloadBytesPerSec = Math.max(bean.getDownload(), 0);
-        COConfigurationManager.setParameter(ICFG_MAX_DOWNLOAD_SPEED_KBS, downloadBytesPerSec / 1024);
-        COConfigurationManager.setParameter(ICFG_MAX_UPLOAD_SPEED_KBS, uploadBytesPerSec / 1024);
+        COConfigurationManager.setParameter(LCFG_MAX_DOWNLOAD_SPEED_KBS, downloadBytesPerSec / 1024);
+        COConfigurationManager.setParameter(LCFG_MAX_UPLOAD_SPEED_KBS, uploadBytesPerSec / 1024);
     }
 
     private void handleSpeedLimiter(@NotNull Context context) {
-        long uploadBytesPerSec = COConfigurationManager.getIntParameter(ICFG_MAX_UPLOAD_SPEED_KBS) * 1024;
-        long downloadBytesPerSec = COConfigurationManager.getIntParameter(ICFG_MAX_DOWNLOAD_SPEED_KBS) * 1024;
+        long uploadBytesPerSec = COConfigurationManager.getIntParameter(LCFG_MAX_UPLOAD_SPEED_KBS) * 1024L;
+        long downloadBytesPerSec = COConfigurationManager.getIntParameter(LCFG_MAX_DOWNLOAD_SPEED_KBS) * 1024L;
         context.json(new CurrentSpeedLimiterBean(uploadBytesPerSec, downloadBytesPerSec));
     }
 
@@ -335,9 +332,8 @@ public class Plugin implements UnloadablePlugin {
         context.json(callbackBean);
     }
 
-    private void handleBanListApplied(Context context) throws IPFilterException {
+    private void handleBanListApplied(Context context) {
         BanBean banBean = context.bodyAsClass(BanBean.class);
-        IPFilter ipFilter = pluginInterface.getIPFilter();
         AtomicInteger success = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
         for (String s : banBean.getIps()) {
@@ -391,7 +387,7 @@ public class Plugin implements UnloadablePlugin {
         ctx.json(banned);
     }
 
-    private void handleBatchUnban(Context ctx) throws IPFilterException {
+    private void handleBatchUnban(Context ctx) {
         UnBanBean banBean = ctx.bodyAsClass(UnBanBean.class);
         AtomicInteger unbanned = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
@@ -439,7 +435,7 @@ public class Plugin implements UnloadablePlugin {
         }
     }
 
-    public void handleBanListReplacement(Context ctx) throws IPFilterException {
+    public void handleBanListReplacement(Context ctx) {
         BanListReplacementBean replacementBean = ctx.bodyAsClass(BanListReplacementBean.class);
         AtomicInteger success = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
