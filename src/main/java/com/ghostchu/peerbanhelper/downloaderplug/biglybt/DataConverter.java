@@ -1,5 +1,6 @@
 package com.ghostchu.peerbanhelper.downloaderplug.biglybt;
 
+import com.biglybt.core.peer.PEPeer;
 import com.biglybt.pif.download.Download;
 import com.biglybt.pif.download.DownloadStats;
 import com.biglybt.pif.messaging.Message;
@@ -143,7 +144,12 @@ public class DataConverter {
         if (peer.supportsMessaging()) {
             messages = peer.getSupportedMessages();
         }
+        PEPeer pePeer = null;
+        if(peer instanceof PEPeer){
+            pePeer = (PEPeer) peer;
+        }
         var limiters = Plugin.getPBHRateLimiter(peer);
+        var peerSource = peer.getDescriptor().getPeerSource();
         return new PeerRecord(
                 peer.isMyPeer(),
                 peer.getState(),
@@ -172,7 +178,10 @@ public class DataConverter {
                 peer.isPriorityConnection(),
                 peer.getHandshakeReservedBytes(),
                 Arrays.stream(messages).map(Message::getID).collect(Collectors.toList()),
-                limiters.getUploadLimiter() != null || limiters.getDownloadLimiter() != null
+                limiters.getUploadLimiter() != null || limiters.getDownloadLimiter() != null,
+                peerSource,
+                peer.getDescriptor().useCrypto(),
+                pePeer != null ? pePeer.getProtocol() : null
         );
     }
 

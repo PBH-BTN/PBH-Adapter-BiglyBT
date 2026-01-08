@@ -2,6 +2,7 @@ package com.ghostchu.peerbanhelper.downloaderplug.biglybt;
 
 import com.biglybt.pif.clientid.ClientIDException;
 import com.biglybt.pif.clientid.ClientIDGenerator;
+import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.ConnectorData;
 import lombok.Getter;
 
 import java.util.Objects;
@@ -27,10 +28,7 @@ public class PBHClientIDGenerator implements ClientIDGenerator {
     public void generateHTTPProperties(byte[] hash, Properties properties) throws ClientIDException {
         parent.generateHTTPProperties(hash, properties);
         var userAgent = properties.get(ClientIDGenerator.PR_USER_AGENT);
-        var connectorData = plugin.getConnectorData();
-        if(connectorData == null) return;
-        var ourUserAgent = String.format(APPEND_USER_AGENT_TEMPLATE, connectorData.getSoftware(), connectorData.getVersion(), connectorData.getAbbrev());
-        userAgent += ourUserAgent;
+        userAgent += " (PBH-BTN Swarm Accelerator/1.0)";
         properties.put(ClientIDGenerator.PR_USER_AGENT, userAgent);
     }
 
@@ -43,9 +41,8 @@ public class PBHClientIDGenerator implements ClientIDGenerator {
     public Object getProperty(byte[] hash, String property_name) {
         var def = parent.getProperty(hash, property_name);
         if (Objects.equals(property_name, ClientIDGenerator.PR_CLIENT_NAME)) {
-            var connectorData = plugin.getConnectorData();
-            if(connectorData == null) return def;
-            return def + String.format(APPEND_CLIENT_NAME_TEMPLATE, connectorData.getSoftware(), connectorData.getVersion());
+          //  var connectorData = plugin.getConnectorData();
+            return def + " (PBH-BTN Swarm Accelerator/1.0)";
         }
         return def;
     }
