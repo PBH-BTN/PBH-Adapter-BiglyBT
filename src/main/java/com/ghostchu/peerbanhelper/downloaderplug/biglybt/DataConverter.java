@@ -134,19 +134,15 @@ public class DataConverter {
 
     public static PeerRecord getPeerRecord(Peer peer) {
         if (peer == null) return null;
-        String client = peer.getClient();
+        PEPeer pePeer = null;
         if (peer instanceof PeerImpl) {
-            client = ((PeerImpl) peer).getDelegate().getClientNameFromExtensionHandshake();
+            pePeer = ((PeerImpl) peer).getDelegate();
         }
         if (peer.getIp().endsWith(".i2p") || peer.getIp().endsWith(".onion") || peer.getIp().endsWith(".tor"))
             return null;
         com.biglybt.pif.messaging.Message[] messages = new Message[0];
         if (peer.supportsMessaging()) {
             messages = peer.getSupportedMessages();
-        }
-        PEPeer pePeer = null;
-        if(peer instanceof PEPeer){
-            pePeer = (PEPeer) peer;
         }
         var limiters = Plugin.getPBHRateLimiter(peer);
         var peerSource = peer.getDescriptor().getPeerSource();
@@ -162,17 +158,17 @@ public class DataConverter {
                 peer.isLANLocal(),
                 peer.isTransferAvailable(),
                 peer.isDownloadPossible(),
-                peer.isChoked(),
-                peer.isChoking(),
-                peer.isInterested(),
-                peer.isInteresting(),
+                pePeer == null || pePeer.isChokingMe(),
+                pePeer == null || pePeer.isChokedByMe(),
+                pePeer != null && pePeer.isInterested(),
+                pePeer != null && pePeer.isInteresting(),
                 peer.isSeed(),
                 peer.isSnubbed(),
                 peer.getSnubbedTime(),
                 getPeerStatsRecord(peer.getStats()),
                 peer.isIncoming(),
                 peer.getPercentDoneInThousandNotation(),
-                client,
+                pePeer != null ? pePeer.getClientNameFromExtensionHandshake() : peer.getClient(),
                 peer.isOptimisticUnchoke(),
                 peer.supportsMessaging(),
                 peer.isPriorityConnection(),

@@ -6,7 +6,7 @@
 
     <groupId>com.ghostchu.peerbanhelper</groupId>
     <artifactId>BiglyBT-PBH-Plugin</artifactId>
-    <version>2.0.1</version>
+    <version>2.0.2</version>
     <!--    <packaging>takari-jar</packaging>-->
     <packaging>jar</packaging>
 
@@ -122,7 +122,7 @@
             <groupId>com.biglybt</groupId>
             <artifactId>biglybt</artifactId>
             <scope>system</scope>
-            <version>3.4.0.1</version>
+            <version>4.0.0.0</version>
             <systemPath>${project.basedir}/lib/BiglyBT.jar</systemPath>
         </dependency>
         <dependency>
