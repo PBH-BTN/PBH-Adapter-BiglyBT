@@ -17,12 +17,12 @@ public class JavalinWebContainer {
     private final JsonMapper gsonMapper = new JsonMapper() {
         @Override
         public @NotNull String toJsonString(@NotNull Object obj, @NotNull Type type) {
-            return Plugin.GSON.toJson(obj,type);
+            return Plugin.GSON.toJson(obj, type);
         }
 
         @Override
         public <T> @NotNull T fromJsonString(@NotNull String json, @NotNull Type targetType) {
-            return  Plugin.GSON.fromJson(json, targetType);
+            return Plugin.GSON.fromJson(json, targetType);
         }
     };
     private Javalin javalin;
@@ -36,8 +36,10 @@ public class JavalinWebContainer {
                     c.http.generateEtags = true;
                     c.showJavalinBanner = false;
                     c.jsonMapper(gsonMapper);
+                    c.http.maxRequestSize = 64000000;
                     c.jetty.multipartConfig.maxTotalRequestSize(64, SizeUnit.MB);
                     c.bundledPlugins.enableCors(cors -> cors.addRule(CorsPluginConfig.CorsRule::anyHost));
+
                 })
                 .exception(Exception.class, (e, ctx) -> {
                     ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
@@ -65,7 +67,7 @@ public class JavalinWebContainer {
                     }
                     throw new APINotLoggedInException();
                 })
-                .after(handler-> handler.header(Header.SERVER, "PeerBanHelper-BiglyBT-Adapter"))
+                .after(handler -> handler.header(Header.SERVER, "PeerBanHelper-BiglyBT-Adapter"))
                 .start(host, port);
     }
 
@@ -73,8 +75,8 @@ public class JavalinWebContainer {
         return javalin;
     }
 
-    public void stop(){
-        if(this.javalin != null){
+    public void stop() {
+        if (this.javalin != null) {
             this.javalin.stop();
         }
     }
