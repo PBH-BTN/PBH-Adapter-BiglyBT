@@ -8,7 +8,6 @@ PeerBanHelper 的 BiglyBT 适配器插件。
 > [!NOTE]
 > 你正在使用 Vuze/Azureus 吗？BiglyBT 的插件与 Vuze/Azureus 的并不兼容，在[这里](https://github.com/PBH-BTN/PBH-Adapter-Azureus)可以找到适合 Vuze/Azureus 的适配器。（注：如果您还在使用 Vuze，请考虑升级到 BiglyBT）
 
-
 ## 安装
 
 ### 第一步
@@ -52,7 +51,7 @@ PeerBanHelper 的 BiglyBT 适配器插件。
 
 ![image](https://github.com/PBH-BTN/PBH-Adapter-BiglyBT/assets/30802565/d0b84c5e-15dc-4403-8caa-f4627cffe3bf)
 
-配置 API 端口号，并记下 Token。
+配置 API 端口号，并记下 Token。新安装默认只监听 `127.0.0.1`，适用于 PeerBanHelper 和 BiglyBT 在同一主机上的部署。跨主机或容器连接时，请把「API 绑定地址」设为 PeerBanHelper 能访问的本机地址，或通过反向代理提供 HTTPS。升级保留现有端口和 Token，旧安装继续沿用原有的监听范围，直到显式修改绑定地址。
 
 ![image](https://github.com/PBH-BTN/PBH-Adapter-BiglyBT/assets/30802565/f9eb6630-e5f0-43e9-8ac0-cec162ce3339)
 
@@ -66,7 +65,7 @@ PeerBanHelper 的 BiglyBT 适配器插件。
 
 ![image](https://github.com/PBH-BTN/PBH-Adapter-BiglyBT/assets/30802565/0ea581a5-23ff-491c-818b-a43b1bb36d66)
 
-填完应当如下图所示（请根据自己实际情况填写，不要照抄，连不上的），对于 BiglyBT，建议启用增量封禁
+填完应当如下图所示（请根据自己实际情况填写，不要照抄，连不上的）。启用增量封禁后，支持新版协议的 PeerBanHelper 会同步新增和移除的地址，并在插件重启或版本不一致时重新发送完整列表
 
 ![image](https://github.com/PBH-BTN/PBH-Adapter-BiglyBT/assets/30802565/5dde841f-b0dd-4745-a920-f9c8b3f676c9)
 
@@ -78,6 +77,9 @@ PeerBanHelper 的 BiglyBT 适配器插件。
 
 ![image](https://github.com/PBH-BTN/PBH-Adapter-BiglyBT/assets/30802565/8c6fcc58-6d59-4daf-beed-0e0afee1eab0)
 
+## 兼容与故障排查
 
-
-
+- 插件 2.1 保留既有插件 ID 和旧版 API。支持协议 2 的 PeerBanHelper 会通过 `/metadata` 选择批量 Peer 采集和版本化封禁同步，两端可以先后升级。
+- 请在 BiglyBT 中开启 IP 过滤。插件的封禁列表由 PeerBanHelper 管理，插件重启后由 PeerBanHelper 重新发送。插件不会覆盖 BiglyBT 原有的过滤规则。BiglyBT 自身对局域网、本机和排除任务的过滤例外仍适用。
+- 若新版 PeerBanHelper 报告 IP 过滤已关闭，检查 BiglyBT 的 IP 过滤设置。列表已收到时，BiglyBT 仍可能因上述例外允许个别连接。
+- 如果旧部署依赖同一 IP 的多个 Peer 连接或客户端标识后缀，请在 BiglyBT 中检查相应设置。插件不会强制开启同 IP 多连接，新安装默认关闭客户端标识改写。

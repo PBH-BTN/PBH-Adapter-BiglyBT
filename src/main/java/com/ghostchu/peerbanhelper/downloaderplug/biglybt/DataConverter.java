@@ -8,7 +8,6 @@ import com.biglybt.pif.peers.*;
 import com.biglybt.pif.tag.Tag;
 import com.biglybt.pif.torrent.Torrent;
 import com.biglybt.pif.torrent.TorrentAnnounceURLListSet;
-import com.biglybt.pifimpl.local.download.DownloadImpl;
 import com.biglybt.pifimpl.local.peers.PeerImpl;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.wrapper.*;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.util.ByteUtil;
@@ -64,15 +63,15 @@ public class DataConverter {
 
     public static DownloadRecord getDownloadRecord(Download download) {
         if (download == null) return null;
-        if (download.getTorrent() == null) return null;
-
-        DownloadImpl downloadImpl = (DownloadImpl) download;
+        Torrent torrent = download.getTorrent();
+        if (torrent == null) return null;
         List<List<String>> trackers = new ArrayList<>();
-        for (TorrentAnnounceURLListSet set : downloadImpl.getTorrent().getAnnounceURLList().getSets()) {
+        for (TorrentAnnounceURLListSet set : torrent.getAnnounceURLList().getSets()) {
             trackers.add(Arrays.stream(set.getURLs()).map(Object::toString).collect(Collectors.toList()));
         }
         DownloadStatsRecord downloadStatsRecord = getDownloadStatsRecord(download.getStats());
-        TorrentRecord torrentRecord = getTorrentRecord(download.getTorrent());
+        TorrentRecord torrentRecord = getTorrentRecord(torrent);
+        if (downloadStatsRecord == null) return null;
         return new DownloadRecord(
                 download.getState(),
                 download.getSubState(),
@@ -94,10 +93,15 @@ public class DataConverter {
                 trackers);
     }
 
+    public static List<PeerRecord> getPeers(PeerManager peerManager) {
+        return peerManager == null ? List.of() : Arrays.stream(peerManager.getPeers())
+                .map(DataConverter::getPeerRecord).filter(Objects::nonNull).collect(Collectors.toList());
+    }
+
     public static PeerManagerRecord getPeerManagerRecord(PeerManager peerManager) {
         if (peerManager == null) return null;
         return new PeerManagerRecord(
-                Arrays.stream(peerManager.getPeers()).map(DataConverter::getPeerRecord).filter(Objects::nonNull).collect(Collectors.toList()),
+                getPeers(peerManager),
                 Arrays.stream(peerManager.getPendingPeers()).map(DataConverter::getDescriptorRecord).filter(Objects::nonNull).collect(Collectors.toList()),
                 getPeerManagerStatsRecord(peerManager.getStats()),
                 peerManager.isSeeding(),
@@ -138,19 +142,28 @@ public class DataConverter {
         if (peer instanceof PeerImpl) {
             pePeer = ((PeerImpl) peer).getDelegate();
         }
-        if (peer.getIp().endsWith(".i2p") || peer.getIp().endsWith(".onion") || peer.getIp().endsWith(".tor"))
+        String ip = peer.getIp();
+        if (ip == null || ip.isBlank() || ip.endsWith(".i2p") || ip.endsWith(".onion") || ip.endsWith(".tor")) {
             return null;
+        }
+        PeerStatsRecord stats = getPeerStatsRecord(peer.getStats());
+        if (stats == null) return null;
         com.biglybt.pif.messaging.Message[] messages = new Message[0];
         if (peer.supportsMessaging()) {
             messages = peer.getSupportedMessages();
         }
         var limiters = Plugin.getPBHRateLimiter(peer);
-        var peerSource = peer.getDescriptor().getPeerSource();
+        var descriptor = peer.getDescriptor();
+        byte[] peerId = peer.getId();
+        String client = pePeer == null ? null : pePeer.getClientNameFromExtensionHandshake();
+        if (client == null || client.isBlank()) {
+            client = peer.getClient();
+        }
         return new PeerRecord(
                 peer.isMyPeer(),
                 peer.getState(),
-                peer.getId() == null ? null : ByteUtil.bytesToHex(peer.getId()),
-                peer.getIp(),
+                peerId == null ? null : ByteUtil.bytesToHex(peerId),
+                ip,
                 peer.getTCPListenPort(),
                 peer.getUDPListenPort(),
                 peer.getUDPNonDataListenPort(),
@@ -165,18 +178,18 @@ public class DataConverter {
                 peer.isSeed(),
                 peer.isSnubbed(),
                 peer.getSnubbedTime(),
-                getPeerStatsRecord(peer.getStats()),
+                stats,
                 peer.isIncoming(),
                 peer.getPercentDoneInThousandNotation(),
-                pePeer != null ? pePeer.getClientNameFromExtensionHandshake() : peer.getClient(),
+                client,
                 peer.isOptimisticUnchoke(),
                 peer.supportsMessaging(),
                 peer.isPriorityConnection(),
                 peer.getHandshakeReservedBytes(),
                 Arrays.stream(messages).map(Message::getID).collect(Collectors.toList()),
                 limiters.getUploadLimiter() != null || limiters.getDownloadLimiter() != null,
-                peerSource,
-                peer.getDescriptor().useCrypto(),
+                descriptor == null ? null : descriptor.getPeerSource(),
+                descriptor != null && descriptor.useCrypto(),
                 pePeer != null ? pePeer.getProtocol() : null
         );
     }
