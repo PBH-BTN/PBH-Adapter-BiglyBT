@@ -67,12 +67,9 @@ public class Plugin implements UnloadablePlugin {
     private StringParameter accessKeyParam;
     private BasicPluginConfigModel configModel;
     private JavalinWebContainer webContainer;
-    private int port;
-    private String bindAddress;
-    private String activeBindAddress;
-    private int activePort;
-    private String activeToken;
-    private String token;
+    private StringParameter bindAddressParam;
+    private ApiSettings activeSettings;
+    private boolean restoringSettings;
     private PluginConfig cfg;
     private volatile ConnectorData connectorData;
     private ClientIDGenerator clientIDGeneratorOriginal;
@@ -132,35 +129,27 @@ public class Plugin implements UnloadablePlugin {
     }
 
     @Override
-    public void initialize(PluginInterface pluginInterface) {
+    public synchronized void initialize(PluginInterface pluginInterface) {
         this.pluginInterface = pluginInterface;
         this.cfg = pluginInterface.getPluginconfig();
         boolean existingInstall = !cfg.getPluginStringParameter("web.token", "").isBlank();
-        this.bindAddress = cfg.getPluginStringParameter("web.bind", existingInstall ? "0.0.0.0" : "127.0.0.1");
-        this.port = cfg.getPluginIntParameter("web.port", 7759);
-        this.token = cfg.getPluginStringParameter("web.token", UUID.randomUUID().toString());
+        var settings = new ApiSettings(
+                cfg.getPluginStringParameter("web.bind", existingInstall ? "0.0.0.0" : "127.0.0.1"),
+                cfg.getPluginIntParameter("web.port", 7759),
+                cfg.getPluginStringParameter("web.token", UUID.randomUUID().toString()));
         this.useClientIdModifier = cfg.getPluginBooleanParameter("bt.useClientIdModifier", false);
         configModel = pluginInterface.getUIManager().createBasicPluginConfigModel("peerbanhelper.configui");
-        listenPortParam = configModel.addIntParameter2("api-port", "peerbanhelper.port", port);
-        listenPortParam.addListener(lis -> {
-            this.port = listenPortParam.getValue();
-            saveAndReload();
-        });
-        accessKeyParam = configModel.addStringParameter2("api-token", "peerbanhelper.token", token);
-        accessKeyParam.addListener(lis -> {
-            this.token = accessKeyParam.getValue();
-            saveAndReload();
-        });
+        listenPortParam = configModel.addIntParameter2("api-port", "peerbanhelper.port", settings.port);
+        accessKeyParam = configModel.addStringParameter2("api-token", "peerbanhelper.token", settings.token);
+        bindAddressParam = configModel.addStringParameter2("api-bind", "peerbanhelper.bind", settings.host);
+        listenPortParam.addListener(parameter -> reloadEditedSettings());
+        accessKeyParam.addListener(parameter -> reloadEditedSettings());
+        bindAddressParam.addListener(parameter -> reloadEditedSettings());
         clientIdModifier = configModel.addBooleanParameter2("use-client-id-modifier", "peerbanhelper.clientIdModifier", useClientIdModifier);
         clientIdModifier.addListener(lis -> {
             this.useClientIdModifier = clientIdModifier.getValue();
             updateClientIdGenerator();
             cfg.setPluginParameter("bt.useClientIdModifier", this.useClientIdModifier);
-        });
-        StringParameter bindParameter = configModel.addStringParameter2("api-bind", "peerbanhelper.bind", bindAddress);
-        bindParameter.addListener(parameter -> {
-            bindAddress = bindParameter.getValue().trim();
-            saveAndReload();
         });
         connectionBlockCounterLabel = configModel.addLabelParameter2("peerbanhelper.connectionBlockCounter");
         updateCounterLabel();
@@ -188,7 +177,8 @@ public class Plugin implements UnloadablePlugin {
         try {
             IpFilterManagerFactory.getSingleton().getIPFilter().addExternalHandler(filterHandler);
             updateClientIdGenerator();
-            saveAndReload();
+            saveAndReload(settings);
+            showSettings(settings);
             counterTimer = pluginInterface.getUtilities().createTimer("PeerBanHelper counter", true);
             counterTimer.addPeriodicEvent(2000, event -> updateCounterLabel());
             pluginInterface.addListener(lifecycle);
@@ -217,8 +207,33 @@ public class Plugin implements UnloadablePlugin {
         }
     }
 
-    private synchronized void saveAndReload() {
-        if (port < 1 || port > 65535 || bindAddress.isBlank() || token.isBlank()) {
+    private synchronized void reloadEditedSettings() {
+        if (restoringSettings || configModel == null || activeSettings == null) {
+            return;
+        }
+        var candidate = new ApiSettings(bindAddressParam.getValue().trim(), listenPortParam.getValue(),
+                accessKeyParam.getValue());
+        try {
+            saveAndReload(candidate);
+        } catch (RuntimeException e) {
+            showSettings(activeSettings);
+            log.warn("Could not apply PeerBanHelper API settings", e);
+        }
+    }
+
+    private void showSettings(ApiSettings settings) {
+        restoringSettings = true;
+        try {
+            listenPortParam.setValue(settings.port);
+            bindAddressParam.setValue(settings.host);
+            accessKeyParam.setValue(settings.token);
+        } finally {
+            restoringSettings = false;
+        }
+    }
+
+    private void saveAndReload(ApiSettings settings) {
+        if (settings.port < 1 || settings.port > 65535 || settings.host.isBlank() || settings.token.isBlank()) {
             throw new IllegalArgumentException("Invalid API bind address, port or token");
         }
         JavalinWebContainer previous = webContainer;
@@ -227,14 +242,11 @@ public class Plugin implements UnloadablePlugin {
             previous.stop();
         }
         try {
-            next.start(bindAddress, port, token, this::initEndpoints);
+            next.start(settings.host, settings.port, settings.token, this::initEndpoints);
         } catch (RuntimeException failure) {
             if (previous != null) {
-                bindAddress = activeBindAddress;
-                port = activePort;
-                token = activeToken;
                 try {
-                    previous.start(activeBindAddress, activePort, activeToken, this::initEndpoints);
+                    previous.start(activeSettings.host, activeSettings.port, activeSettings.token, this::initEndpoints);
                 } catch (RuntimeException recoveryFailure) {
                     failure.addSuppressed(recoveryFailure);
                 }
@@ -242,18 +254,28 @@ public class Plugin implements UnloadablePlugin {
             throw failure;
         }
         webContainer = next;
-        activeBindAddress = bindAddress;
-        activePort = port;
-        activeToken = token;
-        cfg.setPluginParameter("web.bind", activeBindAddress);
-        cfg.setPluginParameter("web.token", activeToken);
-        cfg.setPluginParameter("web.port", activePort);
+        activeSettings = settings;
+        cfg.setPluginParameter("web.bind", settings.host);
+        cfg.setPluginParameter("web.token", settings.token);
+        cfg.setPluginParameter("web.port", settings.port);
         try {
             cfg.save();
         } catch (Exception e) {
             log.warn("Could not save PeerBanHelper adapter settings", e);
         }
-        log.info("PeerBanHelper API listening on {}:{}", bindAddress, port);
+        log.info("PeerBanHelper API listening on {}:{}", settings.host, settings.port);
+    }
+
+    private static final class ApiSettings {
+        final String host;
+        final int port;
+        final String token;
+
+        ApiSettings(String host, int port, String token) {
+            this.host = host;
+            this.port = port;
+            this.token = token;
+        }
     }
 
     private void initEndpoints(Javalin javalin) {
@@ -261,8 +283,8 @@ public class Plugin implements UnloadablePlugin {
                 .post("/setconnector", this::handleSetConnector)
                 .get("/statistics", this::handleStatistics)
                 .get("/v2/bans", ctx -> ctx.json(banStatus()))
-                .put("/v2/bans", ctx -> updateBans(ctx, true, true))
-                .patch("/v2/bans", ctx -> updateBans(ctx, false, true))
+                .put("/v2/bans", ctx -> updateBans(ctx, true))
+                .patch("/v2/bans", ctx -> updateBans(ctx, false))
                 .get("/v2/snapshot", this::handleSnapshot)
                 .get("/downloads", this::handleDownloads)
                 .get("/download/{infoHash}", this::handleDownload)
@@ -411,7 +433,7 @@ public class Plugin implements UnloadablePlugin {
     }
 
     private void handleBanListApplied(Context context) {
-        updateBans(context, false, false);
+        applyLegacyBans(context, context.bodyAsClass(BanBean.class).getIps(), false, false);
     }
 
     private Map<String, Object> banStatus() {
@@ -419,34 +441,38 @@ public class Plugin implements UnloadablePlugin {
                 "filterEnabled", IpFilterManagerFactory.getSingleton().getIPFilter().isEnabled());
     }
 
-    private void updateBans(Context context, boolean replace, boolean versioned) {
+    private void updateBans(Context context, boolean replace) {
+        BanUpdate request = context.bodyAsClass(BanUpdate.class);
+        if (request == null) {
+            throw new BadRequestResponse("Expected a ban update");
+        }
         synchronized (bans) {
-            List<String> added;
-            List<String> removed = List.of();
             long baseRevision = -1;
-            if (versioned) {
-                BanUpdate request = context.bodyAsClass(BanUpdate.class);
-                if (request == null) {
-                    throw new BadRequestResponse("Expected a ban update");
+            if (!replace) {
+                if (!bans.instance().equals(request.instance) || request.revision == null
+                        || request.revision != bans.revision()) {
+                    throw new ConflictResponse("The ban list must be synchronized again");
                 }
-                added = request.added;
-                removed = replace ? List.of() : request.removed;
-                if (!replace) {
-                    if (!bans.instance().equals(request.instance) || request.revision == null
-                            || request.revision != bans.revision()) {
-                        throw new ConflictResponse("The ban list must be synchronized again");
-                    }
-                    baseRevision = request.revision;
-                }
-            } else {
-                added = replace ? context.bodyAsClass(BanListReplacementBean.class).getReplaceWith()
-                        : context.bodyAsClass(BanBean.class).getIps();
+                baseRevision = request.revision;
             }
-            applyBans(replace, added, removed, baseRevision);
-            if (replace || !added.isEmpty()) {
+            applyBans(replace, request.added, replace ? List.of() : request.removed, baseRevision);
+            if (replace || !request.added.isEmpty()) {
                 cleanupPeers();
             }
-            context.json(versioned ? banStatus() : new BatchOperationCallbackBean(added.size(), 0));
+            context.json(banStatus());
+        }
+    }
+
+    private void applyLegacyBans(Context context, List<String> addresses, boolean replace, boolean remove) {
+        if (addresses == null) {
+            throw new BadRequestResponse("Missing IP address list");
+        }
+        synchronized (bans) {
+            int success = bans.updateLegacy(replace, remove, addresses);
+            if (!remove && success > 0) {
+                cleanupPeers();
+            }
+            context.json(new BatchOperationCallbackBean(success, addresses.size() - success));
         }
     }
 
@@ -503,11 +529,7 @@ public class Plugin implements UnloadablePlugin {
     }
 
     private void handleBatchUnban(Context ctx) {
-        List<String> removed = ctx.bodyAsClass(UnBanBean.class).getIps();
-        synchronized (bans) {
-            applyBans(false, List.of(), removed, -1);
-        }
-        ctx.json(new BatchOperationCallbackBean(removed.size(), 0));
+        applyLegacyBans(ctx, ctx.bodyAsClass(UnBanBean.class).getIps(), false, true);
     }
 
     public void handleDownload(Context ctx) {
@@ -547,19 +569,25 @@ public class Plugin implements UnloadablePlugin {
     }
 
     public void handleBanListReplacement(Context ctx) {
-        updateBans(ctx, true, false);
+        applyLegacyBans(ctx, ctx.bodyAsClass(BanListReplacementBean.class).getReplaceWith(), true, false);
     }
 
     private void cleanupPeers() {
+        var filter = IpFilterManagerFactory.getSingleton().getIPFilter();
+        if (!filter.isEnabled()) {
+            return;
+        }
         for (Download download : pluginInterface.getDownloadManager().getDownloads()) {
             PeerManager manager = download.getPeerManager();
-            if (manager == null) {
+            var torrent = download.getTorrent();
+            if (manager == null || torrent == null) {
                 continue;
             }
+            byte[] hash = torrent.getHash();
             for (Peer peer : manager.getPeers()) {
-                if (bans.matches(peer.getIp())) {
+                String ip = peer.getIp();
+                if (bans.matches(ip) && filter.isInRange(ip, download.getName(), hash, false, false)) {
                     manager.removePeer(peer, PBH_IDENTIFIER, Transport.CR_IP_BLOCKED);
-                    connectionBlockCounter.incrementAndGet();
                 }
             }
         }

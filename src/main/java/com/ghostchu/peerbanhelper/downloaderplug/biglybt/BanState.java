@@ -38,9 +38,29 @@ final class BanState {
         if (revision >= 0 && current.revision != revision) {
             throw new IllegalStateException("Ban list revision changed");
         }
+        publish(replace, parse(added), parse(removed));
+    }
+
+    synchronized int updateLegacy(boolean replace, boolean remove, List<String> entries) {
+        Set<IPAddress> valid = new HashSet<>();
+        int success = 0;
+        for (String entry : entries) {
+            try {
+                valid.add(parseAddress(entry));
+                success++;
+            } catch (IllegalArgumentException ignored) {
+                // Legacy callers expect per-entry counts.
+            }
+        }
+        publish(replace, remove ? Set.of() : valid, remove ? valid : Set.of());
+        return success;
+    }
+
+    private void publish(boolean replace, Set<IPAddress> added, Set<IPAddress> removed) {
+        Snapshot current = snapshot;
         Set<IPAddress> addresses = replace ? new HashSet<>() : new HashSet<>(current.addresses);
-        addresses.removeAll(parse(removed));
-        addresses.addAll(parse(added));
+        addresses.removeAll(removed);
+        addresses.addAll(added);
         if (addresses.equals(current.addresses)) {
             return;
         }
@@ -55,13 +75,17 @@ final class BanState {
         }
         Set<IPAddress> result = new HashSet<>();
         for (String entry : entries) {
-            IPAddress address = entry == null ? null : new IPAddressString(entry).getAddress();
-            if (address == null || (address.isMultiple() && !address.isPrefixBlock())) {
-                throw new IllegalArgumentException("Expected an IP address or CIDR prefix");
-            }
-            result.add(address.isPrefixed() ? address.toPrefixBlock() : address);
+            result.add(parseAddress(entry));
         }
         return result;
+    }
+
+    private static IPAddress parseAddress(String entry) {
+        IPAddress address = entry == null ? null : new IPAddressString(entry).getAddress();
+        if (address == null || (address.isMultiple() && !address.isPrefixBlock())) {
+            throw new IllegalArgumentException("Expected an IP address or CIDR prefix");
+        }
+        return address.isPrefixed() ? address.toPrefixBlock() : address;
     }
 
     private static final class Snapshot {
