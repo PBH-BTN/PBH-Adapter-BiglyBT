@@ -12,4 +12,5 @@ public class MetadataCallbackBean {
     private String applicationVersion;
     private String applicationName;
     private String azureusName;
+    private int protocol;
 }

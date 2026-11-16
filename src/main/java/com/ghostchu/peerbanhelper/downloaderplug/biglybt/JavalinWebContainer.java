@@ -6,7 +6,9 @@ import io.javalin.config.SizeUnit;
 import io.javalin.http.Header;
 import io.javalin.http.HttpStatus;
 import io.javalin.json.JsonMapper;
-import io.javalin.plugin.bundled.CorsPluginConfig;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 import org.jetbrains.annotations.NotNull;
 
@@ -30,7 +32,11 @@ public class JavalinWebContainer {
     public JavalinWebContainer() {
     }
 
-    public void start(String host, int port, String token) {
+    public void start(String host, int port, String token, Consumer<Javalin> routes) {
+        if (host.isBlank() || token.isBlank()) {
+            throw new IllegalArgumentException("Bind address and token must be set");
+        }
+        byte[] expected = ("Bearer " + token).getBytes(StandardCharsets.UTF_8);
         this.javalin = Javalin.create(c -> {
                     c.http.gzipOnlyCompression();
                     c.http.generateEtags = true;
@@ -38,12 +44,12 @@ public class JavalinWebContainer {
                     c.jsonMapper(gsonMapper);
                     c.http.maxRequestSize = 64000000;
                     c.jetty.multipartConfig.maxTotalRequestSize(64, SizeUnit.MB);
-                    c.bundledPlugins.enableCors(cors -> cors.addRule(CorsPluginConfig.CorsRule::anyHost));
+
 
                 })
                 .exception(Exception.class, (e, ctx) -> {
                     ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
-                    ctx.json(new SimpleResponse("500 Internal Server Error: " + e.getMessage()));
+                    ctx.json(new SimpleResponse("500 Internal Server Error"));
                     log.warn("500 Internal Server Error", e);
                 })
                 .exception(APINotLoggedInException.class, (e, ctx) -> {
@@ -52,23 +58,19 @@ public class JavalinWebContainer {
                 })
 
                 .beforeMatched(ctx -> {
-                    String authenticated = ctx.sessionAttribute("authenticated");
-                    if (authenticated != null && authenticated.equals(token)) {
-                        return;
+                    String supplied = ctx.header("Authorization");
+                    if (supplied == null || !MessageDigest.isEqual(expected, supplied.getBytes(StandardCharsets.UTF_8))) {
+                        throw new APINotLoggedInException();
                     }
-                    String authToken = ctx.header("Authorization");
-                    if (authToken != null) {
-                        if (authToken.startsWith("Bearer ")) {
-                            String tk = authToken.substring(7);
-                            if (tk.equals(token)) {
-                                return;
-                            }
-                        }
-                    }
-                    throw new APINotLoggedInException();
                 })
-                .after(handler -> handler.header(Header.SERVER, "PeerBanHelper-BiglyBT-Adapter"))
-                .start(host, port);
+                .after(handler -> handler.header(Header.SERVER, "PeerBanHelper-BiglyBT-Adapter"));
+        routes.accept(javalin);
+        try {
+            javalin.start(host, port);
+        } catch (RuntimeException e) {
+            stop();
+            throw e;
+        }
     }
 
     public Javalin javalin() {

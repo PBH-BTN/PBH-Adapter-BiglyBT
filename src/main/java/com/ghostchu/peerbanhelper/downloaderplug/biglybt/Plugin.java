@@ -7,6 +7,7 @@ import com.biglybt.core.ipfilter.IpFilterManagerFactory;
 import com.biglybt.core.networkmanager.Transport;
 import com.biglybt.pif.PluginConfig;
 import com.biglybt.pif.PluginInterface;
+import com.biglybt.pif.PluginListener;
 import com.biglybt.pif.UnloadablePlugin;
 import com.biglybt.pif.clientid.ClientIDGenerator;
 import com.biglybt.pif.download.Download;
@@ -20,6 +21,7 @@ import com.biglybt.pif.ui.config.IntParameter;
 import com.biglybt.pif.ui.config.LabelParameter;
 import com.biglybt.pif.ui.config.StringParameter;
 import com.biglybt.pif.ui.model.BasicPluginConfigModel;
+import com.biglybt.pif.utils.UTTimer;
 import com.biglybt.pifimpl.local.clientid.ClientIDManagerImpl;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.ConnectorData;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.bean.clientbound.*;
@@ -30,8 +32,9 @@ import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.wrapper.Downloa
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.network.wrapper.StatisticsRecord;
 import com.ghostchu.peerbanhelper.downloaderplug.biglybt.util.ByteUtil;
 import com.google.gson.Gson;
-import inet.ipaddr.IPAddressString;
-import inet.ipaddr.format.util.DualIPv4v6Tries;
+import io.javalin.http.BadRequestResponse;
+import io.javalin.http.ConflictResponse;
+import io.javalin.http.ServiceUnavailableResponse;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.http.HttpStatus;
@@ -46,10 +49,8 @@ import java.net.InetAddress;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 import static com.biglybt.core.config.ConfigKeys.Connection.BCFG_LISTEN_PORT_RANDOMIZE_ENABLE;
@@ -61,30 +62,62 @@ import static com.biglybt.core.config.ConfigKeys.Transfer.*;
 public class Plugin implements UnloadablePlugin {
     public static final Gson GSON = new Gson();
     private static final String PBH_IDENTIFIER = "<PeerBanHelper>";
-    private static final Lock BAN_LIST_OPERATION_LOCK = new ReentrantLock();
     private PluginInterface pluginInterface;
     private IntParameter listenPortParam;
     private StringParameter accessKeyParam;
     private BasicPluginConfigModel configModel;
     private JavalinWebContainer webContainer;
     private int port;
+    private String bindAddress;
+    private String activeBindAddress;
+    private int activePort;
+    private String activeToken;
     private String token;
     private PluginConfig cfg;
-    private ConnectorData connectorData;
+    private volatile ConnectorData connectorData;
     private ClientIDGenerator clientIDGeneratorOriginal;
-    private boolean useClientIdModifier;
+    private ClientIDGenerator installedGenerator;
+    private volatile boolean useClientIdModifier;
     private BooleanParameter clientIdModifier;
-    private final DualIPv4v6Tries banList = new DualIPv4v6Tries();
+    private final BanState bans = new BanState();
+    private IpFilterExternalHandler filterHandler;
+    private final PluginListener lifecycle = new PluginListener() {
+        @Override
+        public void initializationComplete() {}
+
+        @Override
+        public void closedownInitiated() {
+            unload();
+        }
+
+        @Override
+        public void closedownComplete() {}
+    };
     private final AtomicLong connectionBlockCounter = new AtomicLong(0);
-    private LabelParameter connectionBlockCounterLabel;
+    private volatile LabelParameter connectionBlockCounterLabel;
+    private UTTimer counterTimer;
+    private final Semaphore snapshotSlots = new Semaphore(2);
 
     @Override
-    public void unload() {
+    public synchronized void unload() {
+        pluginInterface.removeListener(lifecycle);
+        if (counterTimer != null) {
+            counterTimer.destroy();
+            counterTimer = null;
+        }
+        connectionBlockCounterLabel = null;
+        if (filterHandler != null) {
+            IpFilterManagerFactory.getSingleton().getIPFilter().removeExternalHandler(filterHandler);
+            filterHandler = null;
+        }
         if (webContainer != null) {
             webContainer.stop();
+            webContainer = null;
         }
         if (clientIDGeneratorOriginal != null) {
-            ClientIDManagerImpl.getSingleton().setGenerator(clientIDGeneratorOriginal, true);
+            if (ClientIDManagerImpl.getSingleton().getGenerator() == installedGenerator) {
+                ClientIDManagerImpl.getSingleton().setGenerator(clientIDGeneratorOriginal, true);
+            }
         }
         Arrays.stream(pluginInterface.getDownloadManager().getDownloads()).forEach(download -> {
             PeerManager peerManager = download.getPeerManager();
@@ -92,15 +125,21 @@ public class Plugin implements UnloadablePlugin {
                 Arrays.stream(peerManager.getPeers()).forEach(Plugin::removePBHRateLimiter);
             }
         });
+        if (configModel != null) {
+            configModel.destroy();
+            configModel = null;
+        }
     }
 
     @Override
     public void initialize(PluginInterface pluginInterface) {
         this.pluginInterface = pluginInterface;
         this.cfg = pluginInterface.getPluginconfig();
+        boolean existingInstall = !cfg.getPluginStringParameter("web.token", "").isBlank();
+        this.bindAddress = cfg.getPluginStringParameter("web.bind", existingInstall ? "0.0.0.0" : "127.0.0.1");
         this.port = cfg.getPluginIntParameter("web.port", 7759);
         this.token = cfg.getPluginStringParameter("web.token", UUID.randomUUID().toString());
-        this.useClientIdModifier = cfg.getPluginBooleanParameter("bt.useClientIdModifier", true);
+        this.useClientIdModifier = cfg.getPluginBooleanParameter("bt.useClientIdModifier", false);
         configModel = pluginInterface.getUIManager().createBasicPluginConfigModel("peerbanhelper.configui");
         listenPortParam = configModel.addIntParameter2("api-port", "peerbanhelper.port", port);
         listenPortParam.addListener(lis -> {
@@ -115,77 +154,116 @@ public class Plugin implements UnloadablePlugin {
         clientIdModifier = configModel.addBooleanParameter2("use-client-id-modifier", "peerbanhelper.clientIdModifier", useClientIdModifier);
         clientIdModifier.addListener(lis -> {
             this.useClientIdModifier = clientIdModifier.getValue();
+            updateClientIdGenerator();
+            cfg.setPluginParameter("bt.useClientIdModifier", this.useClientIdModifier);
+        });
+        StringParameter bindParameter = configModel.addStringParameter2("api-bind", "peerbanhelper.bind", bindAddress);
+        bindParameter.addListener(parameter -> {
+            bindAddress = bindParameter.getValue().trim();
             saveAndReload();
         });
         connectionBlockCounterLabel = configModel.addLabelParameter2("peerbanhelper.connectionBlockCounter");
         updateCounterLabel();
-        saveAndReload();
         clientIDGeneratorOriginal = ClientIDManagerImpl.getSingleton().getGenerator();
-        IpFilterManagerFactory.getSingleton().getIPFilter().addExternalHandler(new IpFilterExternalHandler() {
+        filterHandler = new IpFilterExternalHandler() {
             @Override
             public boolean isBlocked(byte[] bytes, String s) {
-                try {
-                    if (banList.elementsContaining(new IPAddressString(s).getAddress()) != null) {
-                        connectionBlockCounter.incrementAndGet();
-                        updateCounterLabel();
-                        return true;
-                    }
-                } catch (Exception ignored) {
-                }
-                return false;
+                return isBlocked(s);
             }
 
             @Override
-            public boolean isBlocked(byte[] bytes, InetAddress inetAddress) {
-                try {
-                    if (banList.elementsContaining(new IPAddressString(inetAddress.getHostAddress()).getAddress()) != null) {
-                        connectionBlockCounter.incrementAndGet();
-                        updateCounterLabel();
-                        return true;
-                    }
-                } catch (Exception ignored) {
-                }
-                return false;
+            public boolean isBlocked(byte[] hash, InetAddress address) {
+                return isBlocked(address.getHostAddress());
             }
-        });
-        ClientIDManagerImpl.getSingleton().setGenerator(new PBHClientIDGenerator(this, clientIDGeneratorOriginal), true);
+
+            private boolean isBlocked(String address) {
+                if (!bans.matches(address)) {
+                    return false;
+                }
+                connectionBlockCounter.incrementAndGet();
+                return true;
+            }
+        };
+        installedGenerator = new PBHClientIDGenerator(this, clientIDGeneratorOriginal);
+        try {
+            IpFilterManagerFactory.getSingleton().getIPFilter().addExternalHandler(filterHandler);
+            updateClientIdGenerator();
+            saveAndReload();
+            counterTimer = pluginInterface.getUtilities().createTimer("PeerBanHelper counter", true);
+            counterTimer.addPeriodicEvent(2000, event -> updateCounterLabel());
+            pluginInterface.addListener(lifecycle);
+        } catch (RuntimeException e) {
+            unload();
+            throw e;
+        }
+    }
+
+    private void updateClientIdGenerator() {
+        if (installedGenerator == null) {
+            return;
+        }
+        var manager = ClientIDManagerImpl.getSingleton();
+        if (useClientIdModifier && manager.getGenerator() == clientIDGeneratorOriginal) {
+            manager.setGenerator(installedGenerator, true);
+        } else if (!useClientIdModifier && manager.getGenerator() == installedGenerator) {
+            manager.setGenerator(clientIDGeneratorOriginal, true);
+        }
     }
 
     private void updateCounterLabel() {
-        connectionBlockCounterLabel.setLabelText("Blocked " + connectionBlockCounter.get() + " connect attempts since last restart.");
+        LabelParameter label = connectionBlockCounterLabel;
+        if (label != null) {
+            label.setLabelText("Blocked " + connectionBlockCounter.get() + " connections since plugin startup.");
+        }
     }
 
-    private void saveAndReload() {
-        cfg.setPluginParameter("web.token", token);
-        cfg.setPluginParameter("web.port", port);
-        cfg.setPluginParameter("bt.useClientIdModifier", useClientIdModifier);
+    private synchronized void saveAndReload() {
+        if (port < 1 || port > 65535 || bindAddress.isBlank() || token.isBlank()) {
+            throw new IllegalArgumentException("Invalid API bind address, port or token");
+        }
+        JavalinWebContainer previous = webContainer;
+        var next = new JavalinWebContainer();
+        if (previous != null) {
+            previous.stop();
+        }
         try {
-            this.cfg.save();
+            next.start(bindAddress, port, token, this::initEndpoints);
+        } catch (RuntimeException failure) {
+            if (previous != null) {
+                bindAddress = activeBindAddress;
+                port = activePort;
+                token = activeToken;
+                try {
+                    previous.start(activeBindAddress, activePort, activeToken, this::initEndpoints);
+                } catch (RuntimeException recoveryFailure) {
+                    failure.addSuppressed(recoveryFailure);
+                }
+            }
+            throw failure;
+        }
+        webContainer = next;
+        activeBindAddress = bindAddress;
+        activePort = port;
+        activeToken = token;
+        cfg.setPluginParameter("web.bind", activeBindAddress);
+        cfg.setPluginParameter("web.token", activeToken);
+        cfg.setPluginParameter("web.port", activePort);
+        try {
+            cfg.save();
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            log.warn("Could not save PeerBanHelper adapter settings", e);
         }
-        reloadPlugin();
-    }
-
-    private void reloadPlugin() {
-        if (webContainer != null) {
-            webContainer.stop();
-        }
-        webContainer = new JavalinWebContainer();
-        webContainer.start("0.0.0.0",
-                port,
-                token);
-        log.info("PBH-Adapter WebServer started with: port={}, token={}",
-                port,
-                token);
-        COConfigurationManager.setParameter(ConfigKeys.Transfer.BCFG_ALLOW_SAME_IP_PEERS, true);
-        initEndpoints(webContainer.javalin());
+        log.info("PeerBanHelper API listening on {}:{}", bindAddress, port);
     }
 
     private void initEndpoints(Javalin javalin) {
         javalin.get("/metadata", this::handleMetadata)
                 .post("/setconnector", this::handleSetConnector)
                 .get("/statistics", this::handleStatistics)
+                .get("/v2/bans", ctx -> ctx.json(banStatus()))
+                .put("/v2/bans", ctx -> updateBans(ctx, true, true))
+                .patch("/v2/bans", ctx -> updateBans(ctx, false, true))
+                .get("/v2/snapshot", this::handleSnapshot)
                 .get("/downloads", this::handleDownloads)
                 .get("/download/{infoHash}", this::handleDownload)
                 .get("/download/{infoHash}/peers", this::handlePeers)
@@ -328,26 +406,63 @@ public class Plugin implements UnloadablePlugin {
                 pluginInterface.getPluginVersion(),
                 pluginInterface.getApplicationVersion(),
                 pluginInterface.getApplicationName(),
-                pluginInterface.getAzureusName());
+                pluginInterface.getAzureusName(), 2);
         context.json(callbackBean);
     }
 
     private void handleBanListApplied(Context context) {
-        BanBean banBean = context.bodyAsClass(BanBean.class);
-        AtomicInteger success = new AtomicInteger();
-        AtomicInteger failed = new AtomicInteger();
-        for (String s : banBean.getIps()) {
-            try {
-                banList.add(new IPAddressString(s).getAddress());
-                success.incrementAndGet();
-            } catch (Exception e) {
-                log.error("Failed to apply banlist for IP: {}", s, e);
-                failed.incrementAndGet();
+        updateBans(context, false, false);
+    }
+
+    private Map<String, Object> banStatus() {
+        return Map.of("instance", bans.instance(), "revision", bans.revision(),
+                "filterEnabled", IpFilterManagerFactory.getSingleton().getIPFilter().isEnabled());
+    }
+
+    private void updateBans(Context context, boolean replace, boolean versioned) {
+        synchronized (bans) {
+            List<String> added;
+            List<String> removed = List.of();
+            long baseRevision = -1;
+            if (versioned) {
+                BanUpdate request = context.bodyAsClass(BanUpdate.class);
+                if (request == null) {
+                    throw new BadRequestResponse("Expected a ban update");
+                }
+                added = request.added;
+                removed = replace ? List.of() : request.removed;
+                if (!replace) {
+                    if (!bans.instance().equals(request.instance) || request.revision == null
+                            || request.revision != bans.revision()) {
+                        throw new ConflictResponse("The ban list must be synchronized again");
+                    }
+                    baseRevision = request.revision;
+                }
+            } else {
+                added = replace ? context.bodyAsClass(BanListReplacementBean.class).getReplaceWith()
+                        : context.bodyAsClass(BanBean.class).getIps();
             }
+            applyBans(replace, added, removed, baseRevision);
+            if (replace || !added.isEmpty()) {
+                cleanupPeers();
+            }
+            context.json(versioned ? banStatus() : new BatchOperationCallbackBean(added.size(), 0));
         }
-        cleanupPeers(banBean.getIps());
-        context.status(HttpStatus.OK);
-        context.json(new BatchOperationCallbackBean(success.get(), failed.get()));
+    }
+
+    private void applyBans(boolean replace, List<String> added, List<String> removed, long revision) {
+        try {
+            bans.update(replace, added, removed, revision);
+        } catch (IllegalArgumentException e) {
+            throw new BadRequestResponse(e.getMessage());
+        }
+    }
+
+    private static final class BanUpdate {
+        String instance;
+        Long revision;
+        List<String> added;
+        List<String> removed;
     }
 
     public ConnectorData getConnectorData() {
@@ -377,7 +492,7 @@ public class Plugin implements UnloadablePlugin {
     public void handleBans(Context ctx) {
         boolean includeNonPBH = Boolean.parseBoolean(ctx.queryParam("includeNonPBH"));
         List<String> banned = new ArrayList<>();
-        banList.nodeIterator(false).forEachRemaining(node -> banned.add(node.toString()));
+        banned.addAll(bans.addresses());
         if (includeNonPBH) {
             for (IPBanned bannedIP : pluginInterface.getIPFilter().getBannedIPs()) {
                 banned.add(bannedIP.getBannedIP());
@@ -388,20 +503,11 @@ public class Plugin implements UnloadablePlugin {
     }
 
     private void handleBatchUnban(Context ctx) {
-        UnBanBean banBean = ctx.bodyAsClass(UnBanBean.class);
-        AtomicInteger unbanned = new AtomicInteger();
-        AtomicInteger failed = new AtomicInteger();
-        for (String ip : banBean.getIps()) {
-            try {
-                banList.remove(new IPAddressString(ip).getAddress());
-                unbanned.incrementAndGet();
-            } catch (Exception e) {
-                log.error("Failed to unban IP: {}", ip, e);
-                failed.incrementAndGet();
-            }
+        List<String> removed = ctx.bodyAsClass(UnBanBean.class).getIps();
+        synchronized (bans) {
+            applyBans(false, List.of(), removed, -1);
         }
-        ctx.status(HttpStatus.OK);
-        ctx.json(new BatchOperationCallbackBean(unbanned.get(), failed.get()));
+        ctx.json(new BatchOperationCallbackBean(removed.size(), 0));
     }
 
     public void handleDownload(Context ctx) {
@@ -429,48 +535,62 @@ public class Plugin implements UnloadablePlugin {
                 ctx.status(HttpStatus.NOT_FOUND);
                 return;
             }
-            ctx.json(DataConverter.getPeerManagerRecord(download.getPeerManager()));
+            var record = DataConverter.getPeerManagerRecord(download.getPeerManager());
+            if (record == null) {
+                ctx.json(Map.of("peers", List.of()));
+                return;
+            }
+            ctx.json(record);
         } catch (DownloadException e) {
             ctx.status(HttpStatus.NOT_FOUND);
         }
     }
 
     public void handleBanListReplacement(Context ctx) {
-        BanListReplacementBean replacementBean = ctx.bodyAsClass(BanListReplacementBean.class);
-        AtomicInteger success = new AtomicInteger();
-        AtomicInteger failed = new AtomicInteger();
-        banList.getIPv4Trie().clear();
-        banList.getIPv6Trie().clear();
-        for (String s : replacementBean.getReplaceWith()) {
-            try {
-                banList.add(new IPAddressString(s).getAddress());
-                success.incrementAndGet();
-            } catch (Exception e) {
-                log.error("Failed to apply banlist for IP: {}", s, e);
-                failed.incrementAndGet();
-            }
-        }
-        cleanupPeers(replacementBean.getReplaceWith());
-        ctx.status(HttpStatus.OK);
-        ctx.json(new BatchOperationCallbackBean(success.get(), failed.get()));
+        updateBans(ctx, true, false);
     }
 
-    private void cleanupPeers(List<String> peers) {
-        Arrays.stream(pluginInterface.getDownloadManager().getDownloads())
-                .filter(d -> d.getState() == Download.ST_DOWNLOADING || d.getState() == Download.ST_SEEDING).forEach(download -> {
-                    PeerManager peerManager = download.getPeerManager();
-                    if (peerManager != null) {
-                        peers.forEach(ip -> {
-                            Peer[] waitToBan = peerManager.getPeers(ip);
-                            if (waitToBan != null) {
-                                for (Peer peer : waitToBan) {
-                                    peerManager.removePeer(peer, PBH_IDENTIFIER, Transport.CR_IP_BLOCKED);
-                                    connectionBlockCounter.incrementAndGet();
-                                }
-                            }
-                        });
-                    }
-                });
+    private void cleanupPeers() {
+        for (Download download : pluginInterface.getDownloadManager().getDownloads()) {
+            PeerManager manager = download.getPeerManager();
+            if (manager == null) {
+                continue;
+            }
+            for (Peer peer : manager.getPeers()) {
+                if (bans.matches(peer.getIp())) {
+                    manager.removePeer(peer, PBH_IDENTIFIER, Transport.CR_IP_BLOCKED);
+                    connectionBlockCounter.incrementAndGet();
+                }
+            }
+        }
+    }
+
+    private void handleSnapshot(Context ctx) {
+        if (!snapshotSlots.tryAcquire()) {
+            throw new ServiceUnavailableResponse("BiglyBT is already collecting peer snapshots");
+        }
+        try {
+            ctx.contentType("application/json").result(collectSnapshot(
+                    !"false".equals(ctx.queryParam("includePrivate"))));
+        } finally {
+            snapshotSlots.release();
+        }
+    }
+
+    private String collectSnapshot(boolean includePrivate) {
+        var snapshot = new SnapshotResponse();
+        for (Download download : pluginInterface.getDownloadManager().getDownloads()) {
+            int state = download.getState();
+            if (state != Download.ST_DOWNLOADING && state != Download.ST_SEEDING) {
+                continue;
+            }
+            var record = DataConverter.getDownloadRecord(download);
+            if (record == null || (!includePrivate && record.getTorrent().isPrivateTorrent())) {
+                continue;
+            }
+            snapshot.add(Map.of("download", record, "peers", DataConverter.getPeers(download.getPeerManager())));
+        }
+        return snapshot.finish();
     }
 
     public static void removePBHRateLimiter(Peer peer) {
